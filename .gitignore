@@ -1,0 +1,8 @@
+# ảnh test & file tạm của công cụ
+shots/
+tools/__tmp__/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+Thumbs.db

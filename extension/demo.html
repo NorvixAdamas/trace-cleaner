@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>Trace Cleaner — sidebar demo</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin:0; font:15px/1.6 Georgia, "Times New Roman", serif; background:#f6f4ef; color:#20242b; }
+  .page { max-width: 680px; margin: 0 auto; padding: 48px 32px 120px; }
+  h1 { font-size: 30px; margin: 0 0 6px; letter-spacing:-.02em; }
+  .kicker { font-family: ui-sans-serif, system-ui, sans-serif; font-size:11px; letter-spacing:.16em; color:#8a8f99; }
+  p { margin: 14px 0; }
+  .box { margin-top: 28px; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
+  textarea { width:100%; min-height: 96px; padding:10px; border:1px solid #d6d2c8; border-radius:8px; font:13px/1.55 ui-monospace, monospace; background:#fff; }
+  button { font:13px ui-sans-serif, system-ui, sans-serif; padding:8px 12px; border-radius:8px; border:1px solid #cfcabf; background:#fff; cursor:pointer; }
+  button.go { background:#111827; color:#fff; border-color:#111827; }
+  .hint { font-family: ui-sans-serif, system-ui, sans-serif; font-size:12px; color:#8a8f99; margin-top:10px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="kicker">TRANG GIẢ — ĐỂ TEST SIDEBAR</div>
+  <h1>About our team</h1>
+  <p>This paragraph stands in for a real website. Select some text, or click into the box below, then use the sidebar to pull the text out and push the result back.</p>
+  <p id="selectable">We are a small team that builds tools for people who write for a living. Everything runs locally.</p>
+  <div class="box">
+    <textarea id="siteBox">In today's fast-paced world, I am thrilled to apply for the Software Engineer II role. I bring robust, scalable, and reliable experience — not just in React but in distributed systems.</textarea>
+    <button class="go" id="openSidebar">Mở sidebar</button>
+    <button id="grabSel">Chọn đoạn trên</button>
+    <button id="extEdit">Mô phỏng: sửa prompt từ phía extension</button>
+    <div class="hint">Alt+Shift+T cũng mở/đóng. Stub humanize cố tình chèn lại "thrilled / — / robust" để thấy rõ thứ tự chuỗi.</div>
+  </div>
+</div>
+
+<script src="sidebar.js"></script>
+<script>
+  // Hooks giả: mô phỏng content.js + background.js
+  let lastEditable = document.getElementById("siteBox");
+  document.addEventListener("focusin", e => {
+    const t = e.target;
+    if (t && (t.tagName === "TEXTAREA" || t.isContentEditable)) lastEditable = t;
+  }, true);
+
+  const PROMPT_KEY = "tracePrompt";
+  const stubHumanize = async (text, prompt) => {
+    window.__lastPrompt = prompt || "";
+    // cố tình trả về văn bản còn đầy tell, để bước làm sạch phía sau phải xử lý
+    await new Promise(r => setTimeout(r, 250));
+    return "I am thrilled to apply for the role — robust, seamless, and scalable experience, furthermore it is not just a job but a mission. (" + text.split(/\s+/).length + " từ)";
+  };
+
+  const host = document.createElement("div");
+  host.style.cssText = "position:fixed;top:0;right:0;width:0;height:0;z-index:99999";
+  const shadow = host.attachShadow({ mode: "open" });
+  document.documentElement.appendChild(host);
+
+  const ui = window.TraceSidebar.mount(shadow, {
+    humanize: stubHumanize,
+    grab: () => {
+      const sel = String(window.getSelection());
+      if (sel.trim()) return sel;
+      return lastEditable ? lastEditable.value : "";
+    },
+    insert: (text) => { if (!lastEditable) return false; lastEditable.value = text;
+      lastEditable.dispatchEvent(new Event("input", { bubbles: true })); return true; },
+    close: () => ui.show(false),
+    getPrompt: async () => localStorage.getItem(PROMPT_KEY) || "",
+    setPrompt: v => { localStorage.setItem(PROMPT_KEY, v); document.dispatchEvent(new Event("trace-prompt")); },
+    onPromptChange: cb => {
+      document.addEventListener("trace-prompt", () => cb(localStorage.getItem(PROMPT_KEY) || ""));
+      window.addEventListener("storage", e => { if (e.key === PROMPT_KEY) cb(e.newValue || ""); });
+    },
+    loadCfg: async () => ({ provider: "google", base: "https://generativelanguage.googleapis.com/v1beta", model: "gemma-3-27b-it" }),
+    saveCfg: async () => true
+  });
+
+  window.demoUI = ui;
+  document.getElementById("openSidebar").addEventListener("click", () => ui.show(true));
+  document.getElementById("extEdit").addEventListener("click", () => {
+    localStorage.setItem(PROMPT_KEY, "PROMPT SỬA TỪ PHÍA EXTENSION " + new Date().toLocaleTimeString());
+    document.dispatchEvent(new Event("trace-prompt"));
+  });
+  document.getElementById("grabSel").addEventListener("click", () => {
+    const r = document.createRange(); r.selectNodeContents(document.getElementById("selectable"));
+    const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+  });
+  ui.show(true);
+</script>
+</body>
+</html>
