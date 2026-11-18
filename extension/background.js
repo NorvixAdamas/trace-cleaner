@@ -39,8 +39,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+/* ── mở sidebar: ưu tiên Side Panel gốc của Chrome (không phụ thuộc content script) ── */
+const APP_URL = "https://norvixadamas.github.io/trace-cleaner/";
+
+function enablePanelOnClick(){
+  try { if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {}); } catch {}
+}
+chrome.runtime.onInstalled.addListener(enablePanelOnClick);
+chrome.runtime.onStartup.addListener(enablePanelOnClick);
+enablePanelOnClick();
+
 chrome.action.onClicked.addListener(tab => {
-  if (tab && tab.id) chrome.tabs.sendMessage(tab.id, { type: "toggle" }, () => void chrome.runtime.lastError);
+  // chỉ cần khi bản Chrome không tự mở panel
+  if (chrome.sidePanel && chrome.sidePanel.open && tab && tab.windowId != null){
+    chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {
+      chrome.tabs.create({ url: APP_URL });
+    });
+  } else if (tab && tab.id != null){
+    chrome.tabs.sendMessage(tab.id, { type: "toggle" }, () => void chrome.runtime.lastError);
+  }
 });
 
 async function humanize(text, cfg) {

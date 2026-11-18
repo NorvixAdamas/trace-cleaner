@@ -298,8 +298,8 @@ window.TraceSidebar = (() => {
       localStorage.setItem("traceChainOrder", order);
       paintOrder();
     });
-    $("btnGrab").addEventListener("click", () => {
-      const t = (hooks.grab && hooks.grab()) || "";
+    $("btnGrab").addEventListener("click", async () => {
+      const t = (hooks.grab ? await hooks.grab() : "") || "";
       if (!t) return say("Không đọc được: bôi đen văn bản hoặc bấm vào ô nhập trên trang trước.", "err");
       input.value = t;
       say("Đã lấy " + t.length + " ký tự từ trang.", "ok");
@@ -310,9 +310,9 @@ window.TraceSidebar = (() => {
       try { await navigator.clipboard.writeText(output.value); say("Đã copy.", "ok"); }
       catch { output.select(); document.execCommand("copy"); say("Đã copy.", "ok"); }
     });
-    $("btnInsert").addEventListener("click", () => {
+    $("btnInsert").addEventListener("click", async () => {
       if (!output.value) return say("Chưa có kết quả.", "err");
-      const ok = hooks.insert ? hooks.insert(output.value) : false;
+      const ok = hooks.insert ? await hooks.insert(output.value) : false;
       say(ok ? "Đã dán vào ô đang chọn trên trang." : "Không tìm thấy ô nhập — đã copy vào clipboard.", ok ? "ok" : "");
     });
     $("btnClose").addEventListener("click", () => hooks.close && hooks.close());

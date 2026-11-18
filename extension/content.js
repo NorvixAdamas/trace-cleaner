@@ -138,9 +138,9 @@
     ui.toggle();
   });
 
-  // Alt+Shift+T mở/đóng
+  // Alt+Shift+S mở bản nổi (Alt+Shift+T dành cho Side Panel gốc)
   document.addEventListener("keydown", e => {
-    if (e.altKey && e.shiftKey && (e.key === "T" || e.key === "t")) {
+    if (e.altKey && e.shiftKey && (e.key === "S" || e.key === "s")) {
       if (!ui) build();
       ui.toggle();
     }
