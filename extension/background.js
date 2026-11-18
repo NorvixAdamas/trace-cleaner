@@ -1,5 +1,9 @@
 /* Trace Cleaner — service worker
-   Làm mọi request mạng ở đây để content script không bị CSP của trang chặn. */
+   - Mọi request mạng chạy ở đây để content script không bị CSP của trang chặn.
+   - Mở sidebar: ưu tiên Side Panel gốc của Chrome (cần permission "sidePanel"),
+     luôn có đường dự phòng để bấm icon không bao giờ im lặng. */
+
+const APP_URL = "https://norvixadamas.github.io/trace-cleaner/";
 
 const PROMPT = `You are a meticulous human line editor. Rewrite machine-written prose so it reads like one specific person wrote it in one sitting, without changing any fact.
 
@@ -29,6 +33,49 @@ How a person writes
 
 Output only the rewritten text. No preamble, no notes, no markdown fences.`;
 
+/* ─────────── mở sidebar ─────────── */
+
+function enablePanelOnClick() {
+  try {
+    if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
+      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+        .catch(e => console.warn("[trace] setPanelBehavior:", e && e.message));
+    } else {
+      console.warn("[trace] chrome.sidePanel không có — thiếu permission sidePanel hoặc Chrome < 114");
+    }
+  } catch (e) { console.warn("[trace]", e && e.message); }
+}
+
+chrome.runtime.onInstalled.addListener(enablePanelOnClick);
+chrome.runtime.onStartup.addListener(enablePanelOnClick);
+enablePanelOnClick();
+
+chrome.action.onClicked.addListener(tab => {
+  // Nếu setPanelBehavior đã bật, Chrome tự mở panel và listener này không chạy.
+  // Chạy tới đây nghĩa là panel chưa mở được → mở bằng tay, rồi mới tới các đường lui.
+  if (tab && tab.windowId != null && chrome.sidePanel && chrome.sidePanel.open) {
+    chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => openFallback(tab));
+    return;
+  }
+  openFallback(tab);
+});
+
+function openFallback(tab) {
+  const done = () => chrome.tabs.create({ url: APP_URL });
+  if (!tab || tab.id == null) return done();
+  // trang cũ chưa có content script → chèn rồi mở bản nổi
+  try {
+    chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["sidebar.js", "content.js"] }, () => {
+      if (chrome.runtime.lastError) return done();
+      chrome.tabs.sendMessage(tab.id, { type: "toggle" }, () => {
+        if (chrome.runtime.lastError) done();
+      });
+    });
+  } catch { done(); }
+}
+
+/* ─────────── humanize ─────────── */
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
   if (msg.type === "humanize") {
@@ -37,32 +84,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch(e => sendResponse({ error: String(e && e.message || e) }));
     return true;
   }
-});
-
-/* ── mở sidebar: ưu tiên Side Panel gốc của Chrome (không phụ thuộc content script) ── */
-const APP_URL = "https://norvixadamas.github.io/trace-cleaner/";
-
-function enablePanelOnClick(){
-  try { if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {}); } catch {}
-}
-chrome.runtime.onInstalled.addListener(enablePanelOnClick);
-chrome.runtime.onStartup.addListener(enablePanelOnClick);
-enablePanelOnClick();
-
-chrome.action.onClicked.addListener(tab => {
-  // chỉ cần khi bản Chrome không tự mở panel
-  if (chrome.sidePanel && chrome.sidePanel.open && tab && tab.windowId != null){
-    chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {
-      chrome.tabs.create({ url: APP_URL });
-    });
-  } else if (tab && tab.id != null){
-    chrome.tabs.sendMessage(tab.id, { type: "toggle" }, () => void chrome.runtime.lastError);
-  }
+  if (msg.type === "ping") sendResponse({ ok: true });
 });
 
 async function humanize(text, cfg) {
   if (!text.trim()) throw new Error("văn bản rỗng");
-  // prompt do người dùng sửa (web app hoặc sidebar) được ưu tiên hơn prompt mặc định
   const promptText = (cfg.prompt || "").trim() || PROMPT;
   const provider = cfg.provider === "openai" ? "openai" : "google";
   const base = (cfg.base || (provider === "google"
