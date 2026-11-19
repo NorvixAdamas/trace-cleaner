@@ -1,9 +1,13 @@
 /* Trace Cleaner — service worker
    - Mọi request mạng chạy ở đây để content script không bị CSP của trang chặn.
    - Mở sidebar: ưu tiên Side Panel gốc của Chrome (cần permission "sidePanel"),
-     luôn có đường dự phòng để bấm icon không bao giờ im lặng. */
+     luôn có đường dự phòng để bấm icon không bao giờ im lặng.
+   - Model Google: tự đổi model khi 404, tự thử lại khi 503. */
 
 const APP_URL = "https://norvixadamas.github.io/trace-cleaner/";
+
+/* 11/2026: gemma-* trả 404 trên v1beta, model 2.5 chỉ còn cho key cũ → thử lần lượt. */
+const GOOGLE_FALLBACK = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.5-flash", "gemini-3.1-flash-lite"];
 
 const PROMPT = `You are a meticulous human line editor. Rewrite machine-written prose so it reads like one specific person wrote it in one sitting, without changing any fact.
 
@@ -87,6 +91,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "ping") sendResponse({ ok: true });
 });
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const isModelErr = m => /HTTP 404|not found|not supported for generateContent/i.test(m);
+const isBusyErr = m => /HTTP 503|UNAVAILABLE|high demand|overloaded/i.test(m);
+
 async function humanize(text, cfg) {
   if (!text.trim()) throw new Error("văn bản rỗng");
   const promptText = (cfg.prompt || "").trim() || PROMPT;
@@ -95,30 +103,52 @@ async function humanize(text, cfg) {
     ? "https://generativelanguage.googleapis.com/v1beta"
     : "https://api.openai.com/v1")).replace(/\/+$/, "");
   const model = (cfg.model || "").replace(/^models\//, "") ||
-    (provider === "google" ? "gemma-3-27b-it" : "gpt-4o-mini");
+    (provider === "google" ? "gemini-3.8-flash" : "gpt-4o-mini");
   const key = cfg.key || "";
   if (!key) throw new Error("chưa có API key");
 
   if (provider === "google") {
-    const res = await fetch(`${base}/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: "You are a precise line editor. Never invent facts, names, numbers, technologies or URLs." }] },
-        contents: [{ role: "user", parts: [{ text: promptText + "\n\n---\n" + text }] }],
-        generationConfig: { temperature: 0.85, topP: 0.95, maxOutputTokens: 4096 }
-      })
-    });
-    const body = await res.text();
-    if (!res.ok) throw new Error(`HTTP ${res.status} — ${body.slice(0, 200)}`);
-    const j = JSON.parse(body);
-    if (j.promptFeedback && j.promptFeedback.blockReason) throw new Error("safety filter: " + j.promptFeedback.blockReason);
-    const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
-    const out = parts.map(p => p.text || "").join("").trim();
-    if (!out) throw new Error("model trả về rỗng");
-    return out;
+    const models = [model, ...GOOGLE_FALLBACK].filter((m, i, a) => m && a.indexOf(m) === i);
+    let lastErr = "";
+    for (const m of models) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          return await geminiCall(base, m, key, promptText, text);
+        } catch (e) {
+          lastErr = String(e && e.message || e);
+          if (isBusyErr(lastErr) && attempt === 0) { await sleep(1800); continue; }
+          if (isModelErr(lastErr)) break;      // 404 → đổi model
+          throw e;                             // 401/429/key sai → dừng luôn
+        }
+      }
+    }
+    throw new Error(lastErr || "không gọi được model nào");
   }
 
+  return openaiCall(base, model, key, promptText, text);
+}
+
+async function geminiCall(base, model, key, promptText, text) {
+  const res = await fetch(`${base}/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: "You are a precise line editor. Never invent facts, names, numbers, technologies or URLs." }] },
+      contents: [{ role: "user", parts: [{ text: promptText + "\n\n---\n" + text }] }],
+      generationConfig: { temperature: 0.85, topP: 0.95, maxOutputTokens: 4096 }
+    })
+  });
+  const body = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status} — ${body.slice(0, 200)}`);
+  const j = JSON.parse(body);
+  if (j.promptFeedback && j.promptFeedback.blockReason) throw new Error("safety filter: " + j.promptFeedback.blockReason);
+  const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+  const out = parts.map(p => p.text || "").join("").trim();
+  if (!out) throw new Error("model trả về rỗng");
+  return out;
+}
+
+async function openaiCall(base, model, key, promptText, text) {
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },

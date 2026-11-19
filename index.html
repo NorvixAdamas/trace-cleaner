@@ -192,6 +192,7 @@
   .pane-head{padding:10px 16px;font-size:11px;letter-spacing:.09em;color:#7d8ca1}
   #src{background:transparent;padding:16px 18px}
   #src:focus{background:rgba(94,234,212,.02)}
+  #src.dropon{outline:2px dashed #5eead4;outline-offset:-6px;background:rgba(94,234,212,.06)}
   .row{background:rgba(21,28,39,.85);backdrop-filter:blur(6px)}
   button{border-radius:9px;background:linear-gradient(180deg,#232b37,#1b222c);transition:.13s}
   button:hover{transform:translateY(-1px);border-color:var(--line2);box-shadow:0 6px 18px -10px rgba(0,0,0,.9)}
@@ -337,7 +338,7 @@
     </nav>
     <div id="ltab-text" class="ltab">
     <div class="pane-head"><span>Văn bản gốc</span><span id="inputStats" class="muted">0 từ · 0 ký tự</span></div>
-    <textarea id="src" spellcheck="false" placeholder="Dán văn bản cần kiểm tra vào đây…"></textarea>
+    <textarea id="src" spellcheck="false" placeholder="Dán văn bản cần kiểm tra vào đây… hoặc kéo–thả file .txt / .md vào ô này"></textarea>
     <div class="row">
       <button id="btnScan" class="primary">Quét</button>
       <button id="btnClean">Làm sạch</button>
@@ -454,7 +455,14 @@
           <input id="apiBase" class="inp" spellcheck="false">
         </div>
         <div class="mcard">Model
-          <input id="apiModel" class="inp" placeholder="gemma-3-27b-it" spellcheck="false">
+          <input id="apiModel" class="inp" placeholder="gemini-3.8-flash" list="modelSuggest" spellcheck="false">
+          <datalist id="modelSuggest">
+            <option value="gemini-3.8-flash"></option>
+            <option value="gemini-flash-latest"></option>
+            <option value="gemini-3.5-flash"></option>
+            <option value="gemini-3.1-flash-lite"></option>
+            <option value="gemini-3.1-pro-preview"></option>
+          </datalist>
         </div>
         <div class="mcard">API key
           <input id="apiKey" class="inp" type="password" placeholder="AQ… / AIza… / sk-…" autocomplete="off">
@@ -1995,8 +2003,12 @@ let lastRewrite = {raw:"", clean:""};
 
 const noteBox = m => '<div class="note warn">' + esc(m) + '</div>';
 
+/* Google đổi tên model rất nhanh: 11/2026 gemma-* trả 404 trên v1beta, model 2.5 chỉ còn
+   cho key cũ. Khi model đang chọn 404/503, app tự thử các model dưới đây rồi mới báo lỗi. */
+const GOOGLE_FALLBACK = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-3.5-flash", "gemini-3.1-flash-lite"];
+
 const PROVIDERS = {
-  google: {base:"https://generativelanguage.googleapis.com/v1beta", model:"gemma-3-27b-it"},
+  google: {base:"https://generativelanguage.googleapis.com/v1beta", model:"gemini-3.8-flash"},
   openai: {base:"https://api.openai.com/v1", model:"gpt-4o-mini"}
 };
 
@@ -2079,10 +2091,34 @@ function loadApiCfg(){
   $("rewritePrompt").value = buildHumanPrompt($("rewritePreset").value);
 }
 
-async function callLLM(text, cfg, prompt, signal){
-  return cfg.provider === "google"
-    ? callGemini(text, cfg, prompt, signal)
-    : callOpenAI(text, cfg, prompt, signal);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const isValidErr = m => /HTTP 404|not found|not supported for generateContent/i.test(m);
+const isBusyErr  = m => /HTTP 503|UNAVAILABLE|high demand|overloaded/i.test(m);
+
+/* Gọi model đã chọn; gặp 404 thì đổi model, gặp 503 thì chờ 1,8s thử lại 1 lần. */
+async function callLLM(text, cfg, prompt, signal, onModelSwitch){
+  if (cfg.provider !== "google") return callOpenAI(text, cfg, prompt, signal);
+  const main = (cfg.model || "").replace(/^models\//, "");
+  const models = [main, ...GOOGLE_FALLBACK].filter((m, i, a) => m && a.indexOf(m) === i);
+  const tried = [];
+  let lastErr = null;
+  for (const model of models){
+    for (let attempt = 0; attempt < 2; attempt++){
+      try {
+        if (model !== main && onModelSwitch) onModelSwitch(model);
+        return await callGemini(text, {...cfg, model}, prompt, signal);
+      } catch(e){
+        if (e && e.name === "AbortError") throw e;
+        lastErr = e;
+        const msg = String(e && e.message || e);
+        if (isBusyErr(msg) && attempt === 0){ await sleep(1800); continue; }
+        if (isValidErr(msg)){ tried.push(model); break; }
+        throw e;
+      }
+    }
+  }
+  const tail = tried.length ? " (đã thử: " + tried.join(", ") + ")" : "";
+  throw new Error((lastErr ? lastErr.message : "không gọi được model nào") + tail);
 }
 
 async function callGemini(text, cfg, prompt, signal){
@@ -2160,10 +2196,10 @@ async function listModels(){
     const rest = names.filter(n => !/gemma|gemini/i.test(n));
     const opt = n => `<option>${esc(n)}</option>`;
     $("apiModelSel").innerHTML = '<option value="">— chọn model —</option>' +
-      (gemma.length ? `<optgroup label="Gemma — free ~30 RPM / 14.400 lượt·ngày">${gemma.map(opt).join("")}</optgroup>` : "") +
       (gemini.length ? `<optgroup label="Gemini">${gemini.map(opt).join("")}</optgroup>` : "") +
+      (gemma.length ? `<optgroup label="Gemma — API trả 404, không dùng được">${gemma.map(opt).join("")}</optgroup>` : "") +
       (rest.length ? `<optgroup label="Khác">${rest.map(opt).join("")}</optgroup>` : "");
-    stats.innerHTML = `<div class="note">Thấy <b>${names.length}</b> model dùng được. <b>Gemma</b> xếp trước: free tier ~30 RPM và 14.400 lượt/ngày, còn Gemini Flash chỉ ~5 RPM / 20 lượt/ngày (số đọc 10–11/2026; Google nói không đảm bảo — xem AI Studio → Rate limits).</div>`;
+    stats.innerHTML = `<div class="note">Thấy <b>${names.length}</b> model khai báo <code>generateContent</code> — nhưng <b>có trong danh sách không có nghĩa là key của bạn gọi được</b>. 11/2026: Gemma trả 404 “not found for API version v1beta”, các model 2.5 chỉ còn phục vụ key đã dùng trước đó. Dùng <code>gemini-3.8-flash</code> hoặc <code>gemini-flash-latest</code>; nút chạy tự chuyển model khi gặp 404/503.</div>`;
   } catch(e){
     stats.innerHTML = noteBox("Không lấy được danh sách model: " + e.message);
   }
@@ -2184,13 +2220,18 @@ async function runRewrite(){
   out.classList.add("hidden");
   $("rewriteActions").hidden = true;
   const t0 = performance.now();
+  let usedModel = cfg.model;
+  const onModelSwitch = m => {
+    usedModel = m;
+    stats.innerHTML = '<div class="empty">Model <code>' + esc(cfg.model) + '</code> không dùng được (404/503) — đang thử <code>' + esc(m) + '</code> …</div>';
+  };
   try {
     rewriteAbort = new AbortController();
-    let raw = await callLLM(text, cfg, prompt, rewriteAbort.signal);
+    let raw = await callLLM(text, cfg, prompt, rewriteAbort.signal, onModelSwitch);
     let passes = 1;
     if (twoPass){
       stats.innerHTML = '<div class="empty">Vòng 2: model tự sửa bản của chính nó…</div>';
-      raw = await callLLM(raw, cfg, SELF_EDIT, rewriteAbort.signal);
+      raw = await callLLM(raw, {...cfg, model: usedModel}, SELF_EDIT, rewriteAbort.signal, onModelSwitch);
       passes = 2;
     }
     const cleaned = cleanText(raw, cleanOpts()).text;
@@ -2205,13 +2246,15 @@ async function runRewrite(){
         <div class="mcard"><b>${((performance.now() - t0)/1000).toFixed(1)}s</b><span>thời gian</span></div>
         <div class="mcard"><b>${passes}</b><span>vòng</span></div>
       </div>
-      <div class="note">% là <b>21 tiêu chí của guide</b>, không phải xác suất AI. Model viết lại thường <i>làm tăng</i> tell trước khi cleaner dọn — nếu cột giữa thấp hơn cột đầu thì đúng như dự đoán.</div>`;
+      <div class="note">% là <b>21 tiêu chí của guide</b>, không phải xác suất AI. Model viết lại thường <i>làm tăng</i> tell trước khi cleaner dọn — nếu cột giữa thấp hơn cột đầu thì đúng như dự đoán.</div>
+      <div class="muted" style="font-size:11.5px;margin-top:6px">model đã dùng: <code>${esc(usedModel)}</code></div>`;
     out.textContent = cleaned;
     out.classList.remove("hidden");
     $("rewriteActions").hidden = false;
   } catch(e){
     stats.innerHTML = `<div class="note warn"><b>Không gọi được:</b> ${esc(e.message)}<br>
-      <i>Failed to fetch</i> = CORS / sai Base URL / mạng chặn. <i>HTTP 401</i> = key sai. <i>HTTP 429</i> = hết quota.</div>`;
+      <i>Failed to fetch</i> = CORS / sai Base URL / mạng chặn. <i>HTTP 401</i> = key sai. <i>HTTP 429</i> = hết quota.<br>
+      <i>HTTP 404</i> = model không tồn tại hoặc không phục vụ <code>generateContent</code> → nhập <code>gemini-3.8-flash</code>. <i>HTTP 503</i> = model quá tải, app đã tự thử lại và đổi model nhưng vẫn không được → chờ vài phút.</div>`;
   } finally { rewriteAbort = null; }
 }
 
@@ -3047,6 +3090,56 @@ $("btnPickImg").addEventListener("click", e => { e.stopPropagation(); $("imgInpu
 dz.addEventListener("drop", e => {
   const fl = e.dataTransfer && e.dataTransfer.files;
   if (fl && fl.length) handleFiles(fl);
+});
+
+/* ────────  Kéo–thả văn bản: thả file .txt/.md vào ô là nạp luôn  ──────── */
+
+const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|html?|xml|ya?ml|log|srt|vtt|tex)$/i;
+function insertAtCursor(el, t){
+  const s = el.selectionStart == null ? el.value.length : el.selectionStart;
+  const e2 = el.selectionEnd == null ? s : el.selectionEnd;
+  el.value = el.value.slice(0, s) + t + el.value.slice(e2);
+  el.selectionStart = el.selectionEnd = s + t.length;
+  el.focus();
+}
+const dragHas = e => {
+  const t = e.dataTransfer && e.dataTransfer.types;
+  return !!t && ([...t].includes("Files") || [...t].includes("text/plain"));
+};
+["dragenter", "dragover"].forEach(ev => src.addEventListener(ev, e => {
+  if (!dragHas(e)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  src.classList.add("dropon");
+}));
+src.addEventListener("dragleave", () => src.classList.remove("dropon"));
+src.addEventListener("drop", async e => {
+  if (!dragHas(e)) return;
+  e.preventDefault();
+  src.classList.remove("dropon");
+  const dt = e.dataTransfer;
+  const files = [...(dt.files || [])];
+  if (files.length){
+    const f = files.find(x => TEXT_EXT.test(x.name) || /^text\//.test(x.type)) || files[0];
+    if (files.length > 1) toast(`Thả ${files.length} file — chỉ nạp “${f.name}”, file khác xem ở tab File`);
+    try {
+      const t = await f.text();
+      if (!t.trim()){ toast(`“${f.name}” rỗng hoặc là file nhị phân`); return; }
+      const had = src.value.trim();
+      src.value = had ? had + "\n\n" + t.trim() : t;
+      updateInputStats();
+      renderScan(src.value);
+      switchTab("scan");
+      toast(had ? `Đã nối thêm “${f.name}” — ${words(t)} từ` : `Đã nạp “${f.name}” — ${words(t)} từ`);
+    } catch(err){ toast("Không đọc được file: " + err.message); }
+    return;
+  }
+  const txt = dt.getData("text/plain");
+  if (txt){
+    insertAtCursor(src, txt);
+    updateInputStats();
+    toast(`Đã chèn ${txt.length} ký tự`);
+  }
 });
 
 /* ──────────────────────────  Sự kiện  ────────────────────────── */

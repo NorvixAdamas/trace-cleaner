@@ -111,6 +111,7 @@ window.TraceSidebar = (() => {
              border-radius: 9px; padding: 9px 10px; font: 12.5px/1.55 ui-monospace, Menlo, Consolas, monospace; }
   textarea:focus { outline: 2px solid #38bdf8; outline-offset: -1px; border-color: #38bdf8; }
   #input { min-height: 132px; } #output { min-height: 132px; }
+  #input.dropon { outline: 2px dashed #5eead4; outline-offset: -2px; }
   .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   button { font: inherit; font-size: 12px; padding: 6px 10px; border-radius: 8px; cursor: pointer;
            border: 1px solid #2a3c59; background: #16233a; color: #dbe6f5; }
@@ -164,7 +165,7 @@ window.TraceSidebar = (() => {
         <summary>API key &amp; model</summary>
         <select id="cProvider"><option value="google">Google Gemini</option><option value="openai">OpenAI-compatible</option></select>
         <input id="cBase" placeholder="base url">
-        <input id="cModel" placeholder="gemma-3-27b-it">
+        <input id="cModel" placeholder="gemini-3.8-flash">
         <input id="cKey" type="password" placeholder="API key (lưu trong chrome.storage.local)">
         <button id="btnSaveCfg" style="margin-top:6px">Lưu cấu hình</button>
       </details>
@@ -214,6 +215,27 @@ window.TraceSidebar = (() => {
 
     const say = (msg, kind) => { status.textContent = msg || ""; status.className = "status" + (kind ? " " + kind : ""); };
     const paintOrder = () => { $("order").textContent = order === "human-first" ? "Humanize → Làm sạch" : "Làm sạch → Humanize"; };
+
+    /* thả file .txt/.md vào ô văn bản là nạp luôn */
+    ["dragenter", "dragover"].forEach(ev => input.addEventListener(ev, e => {
+      const t = e.dataTransfer && e.dataTransfer.types;
+      if (!t || ![...t].includes("Files")) return;
+      e.preventDefault(); input.classList.add("dropon");
+    }));
+    input.addEventListener("dragleave", () => input.classList.remove("dropon"));
+    input.addEventListener("drop", async e => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      e.preventDefault(); input.classList.remove("dropon");
+      const f = files[0];
+      try {
+        const t = await f.text();
+        if (!t.trim()) { say("File rỗng hoặc nhị phân: " + f.name, "err"); return; }
+        const had = input.value.trim();
+        input.value = had ? had + "\n\n" + t.trim() : t;
+        say(`Đã nạp ${f.name} · ${t.length} ký tự`);
+      } catch (err) { say("Không đọc được file: " + err.message, "err"); }
+    });
 
     function paintMetrics(cleaned) {
       const r = cleaned.removed, m = $("metrics");
@@ -327,7 +349,7 @@ window.TraceSidebar = (() => {
       if (cfg.model) $("cModel").value = cfg.model;
       if (cfg.key) $("cKey").value = cfg.key;
       if (!cfg.base) $("cBase").value = "https://generativelanguage.googleapis.com/v1beta";
-      if (!cfg.model) $("cModel").value = "gemma-3-27b-it";
+      if (!cfg.model) $("cModel").value = "gemini-3.8-flash";
     })();
     $("btnSaveCfg").addEventListener("click", async () => {
       if (hooks.saveCfg) await hooks.saveCfg(readCfg());

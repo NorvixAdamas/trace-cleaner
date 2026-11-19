@@ -70,7 +70,7 @@
       document.addEventListener("trace-prompt", () => cb(localStorage.getItem(PROMPT_KEY) || ""));
       window.addEventListener("storage", e => { if (e.key === PROMPT_KEY) cb(e.newValue || ""); });
     },
-    loadCfg: async () => ({ provider: "google", base: "https://generativelanguage.googleapis.com/v1beta", model: "gemma-3-27b-it" }),
+    loadCfg: async () => ({ provider: "google", base: "https://generativelanguage.googleapis.com/v1beta", model: "gemini-3.8-flash" }),
     saveCfg: async () => true
   });
 
