@@ -380,6 +380,7 @@
       <button id="btnSwapOrder" class="ghost" title="Đổi thứ tự chạy hai bước">⇄ <span id="orderLabel">Humanize → Làm sạch</span></button>
       <button id="btnMd" class="ghost" aria-pressed="true" title="Bật: giữ heading / **bold** / bullet / link khi làm sạch và dặn AI giữ nguyên cấu trúc. Tắt: xoá hết định dạng rồi tự căn lại.">Markdown: giữ</button>
       <button id="btnRunChain" class="primary">Chạy chuỗi</button>
+      <button id="btnUndoChain" class="ghost" title="Khôi phục văn bản trước lần chạy chuỗi gần nhất" disabled>↩ Bản trước</button>
     </div>
     <fieldset>
       <legend>Tuỳ chọn làm sạch</legend>
@@ -387,7 +388,7 @@
       <label><input type="checkbox" id="optQuotes" checked> Ngoặc cong → thẳng</label>
       <label><input type="checkbox" id="optHomo" checked> Homoglyph → Latin</label>
       <label><input type="checkbox" id="optPhrases" checked> Thay cụm AI-ism</label>
-      <label title="Bỏ intensifier, đổi tính từ đánh giá, xoá mở/kết sáo, cắt bộ ba về 2 mục"><input type="checkbox" id="optStruct" checked> <b>Sửa cấu trúc</b> (tricolon · intensifier · mở/kết sáo)</label>
+      <label title="Bỏ intensifier, đổi tính từ đánh giá, xoá mở/kết sáo, bỏ dấu phẩy Oxford, giữ đủ mục"><input type="checkbox" id="optStruct" checked> <b>Sửa cấu trúc</b> (tricolon · intensifier · mở/kết sáo)</label>
       <label>Em dash <select id="optEm">
         <option value="comma">→ dấu phẩy</option>
         <option value="hyphen">→ gạch nối</option>
@@ -534,11 +535,13 @@
         <button id="btnStopRewrite" class="ghost">Dừng</button>
       </div>
       <div id="rewriteStats"></div>
+      <div id="preserveReport"></div>
       <pre id="rewriteOut" class="hidden"></pre>
       <div class="row" id="rewriteActions" style="background:none;border:0;padding:8px 0" hidden>
         <button id="btnUseAi" class="primary">Đưa bản đã sạch vào ô văn bản</button>
         <button id="btnUseAiRaw">Đưa bản AI thô</button>
         <button id="btnCopyAi" class="ghost">Copy</button>
+        <button id="btnRestoreRewrite" class="ghost" title="Khôi phục đúng văn bản đã có trước lần chạy này">↩ Bản gốc trước khi chạy</button>
       </div>
       <div class="muted" style="font-size:11.5px;margin-top:8px;line-height:1.7">
         Key gửi dưới header <code>x-goog-api-key</code> (Gemini) hoặc <code>Authorization</code> (OpenAI), chỉ tới Base URL bạn nhập — không log.
@@ -1131,6 +1134,7 @@ const NAMES = {
   0x201D:"RIGHT DOUBLE QUOTATION", 0x2026:"HORIZONTAL ELLIPSIS",
   0x00AB:"LEFT-POINTING DOUBLE ANGLE", 0x00BB:"RIGHT-POINTING DOUBLE ANGLE",
   0x2028:"LINE SEPARATOR", 0x2029:"PARAGRAPH SEPARATOR", 0x0085:"NEXT LINE",
+  0x200E:"LEFT-TO-RIGHT MARK", 0x200F:"RIGHT-TO-LEFT MARK", 0x061C:"ARABIC LETTER MARK",
   0x2066:"LEFT-TO-RIGHT ISOLATE", 0x2067:"RIGHT-TO-LEFT ISOLATE",
   0x2068:"FIRST STRONG ISOLATE", 0x2069:"POP DIRECTIONAL ISOLATE",
   0x00B4:"ACUTE ACCENT (thay cho nháy)", 0x02BC:"MODIFIER LETTER APOSTROPHE",
@@ -1139,6 +1143,7 @@ const NAMES = {
 
 const BLANKS = new Set([0x00A0,0x2007,0x2009,0x202F,0x2002,0x2003,0x2004,0x2005,0x2006,0x2008,0x200A,0x3000]);
 const KILL    = new Set([0x200B,0x2060,0xFEFF,0x00AD,0x180E,0x2061,0x2062,0x2063,0x2064,
+                         0x200E,0x200F,0x061C,
                          0x2066,0x2067,0x2068,0x2069,0x202A,0x202B,0x202C,0x202D,0x202E]);
 const PUNCT   = new Set([0x2014,0x2013,0x2018,0x2019,0x201C,0x201D,0x2026,0x00AB,0x00BB,0x2011,0x2010,0x00B4,0x02BC]);
 
@@ -1469,7 +1474,14 @@ function cleanText(text, o){
   const inc = (k, n=1) => { log[k] = (log[k] || 0) + n; };
   let out = "";
 
-  for (const ch of text.normalize("NFC")){
+  /* Emoji cờ = 🏴 + tag chars. Xoá tag char sẽ phá cờ, nên giữ cả chuỗi. */
+  const flagSeqs = [];
+  const source = text.normalize("NFC").replace(/\u{1F3F4}[\u{E0020}-\u{E007F}]+/gu, m => {
+    flagSeqs.push(m);
+    return "\u0002" + (flagSeqs.length - 1) + "\u0002";
+  });
+
+  for (const ch of source){
     const cp = ch.codePointAt(0);
     const cat = classify(ch, cp);
 
@@ -1535,6 +1547,19 @@ function cleanText(text, o){
     }
   }
 
+  /* Bảo vệ URL và code trước mọi regex cấu trúc bên dưới, nếu không
+     ".../a,b,and,c" hoặc code `a, b, and c` sẽ bị sửa như văn xuôi. */
+  const urls = [];
+  out = out.replace(/\b(?:https?:\/\/|mailto:)[^\s)\]<>"']+/gi, m => {
+    urls.push(m);
+    return "\u0000" + (urls.length - 1) + "\u0000";
+  });
+  const codeSpans = [];
+  out = out.replace(/```[\s\S]*?```|`[^`\n]+`/g, m => {
+    codeSpans.push(m);
+    return "\u0001" + (codeSpans.length - 1) + "\u0001";
+  });
+
   /* ── sửa cấu trúc: những tell mà regex ký tự không chạm tới ── */
   if (o.structural){
     // 1. intensifier: bỏ hẳn phó từ cường độ (đầu câu thì viết hoa chữ sau)
@@ -1577,8 +1602,9 @@ function cleanText(text, o){
       /(?<![\wÀ-ỹ-])([A-Za-zÀ-ỹ0-9][^,.;:!?()\n]{1,38}),\s+([A-Za-zÀ-ỹ0-9][^,.;:!?()\n]{1,38}),\s+(and|or|và|hoặc)\s+([A-Za-zÀ-ỹ0-9][^,.;:!?()\n]{1,50})/g,
       (m, a, b, conj, c) => {
         tc++;
-        if (notes.length < 4) notes.push(`bỏ "${b.trim()}" → còn "${a.trim()} ${conj} ${c.trim()}"`);
-        return `${a} ${conj} ${c}`;
+        /* Giữ đủ mọi mục: xoá mục giữa là mất dữ kiện (Java trong "Kotlin, Java, and Python"). */
+        if (notes.length < 4) notes.push(`bỏ dấu phẩy Oxford: "${a.trim()}, ${b.trim()} ${conj} ${c.trim()}"`);
+        return `${a}, ${b} ${conj} ${c}`;
       });
     if (tc) log.tricolon = tc;
 
@@ -1590,8 +1616,9 @@ function cleanText(text, o){
 
     // 6. frame đối lập: đổi sang cách nói trực tiếp
     let fr = 0;
+    /* Không sửa "not just X": đổi thành "X" là đảo nghĩa. Chỉ đổi các khung
+       không mang phủ định. */
     const FRAME_FIX = [
-      [/\b(am|is|are|was|were)\s+not\s+just\s+/gi, "$1 "],
       [/\bmatters\s+because\b/gi, "matters:"],
       [/\brather\s+than\s+relying\b/gi, "instead of relying"],
       [/\bnot\s+simply\b/gi, "not"],
@@ -1684,13 +1711,6 @@ function cleanText(text, o){
     if (md.n) log.markdown = md.n;
   }
 
-  /* URL phải sống sót qua bước thêm khoảng trắng sau ':' và viết hoa đầu câu */
-  const urls = [];
-  out = out.replace(/\b(?:https?:\/\/|mailto:)[^\s)\]<>"']+/gi, m => {
-    urls.push(m);
-    return "\u0000" + (urls.length - 1) + "\u0000";
-  });
-
   /* chuẩn hoá khoảng trắng + dấu câu */
   out = out
     .replace(/[ \t]{2,}/g, " ")
@@ -1704,7 +1724,9 @@ function cleanText(text, o){
   out = out.replace(/(^|[.!?]\s+|\n)([a-zàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])/g,
     (m, pre, c) => pre + c.toUpperCase());
 
+  out = out.replace(/\u0001(\d+)\u0001/g, (m, i) => codeSpans[+i] || "");
   out = out.replace(/\u0000(\d+)\u0000/g, (m, i) => urls[+i] || "");
+  out = out.replace(/\u0002(\d+)\u0002/g, (m, i) => flagSeqs[+i] || "");
 
   return {text: out, log, notes};
 }
@@ -2085,6 +2107,7 @@ function paintScore(){
 const API_STORE = "traceApi";
 let rewriteAbort = null;
 let lastRewrite = {raw:"", clean:""};
+let lastRewriteOriginal = "";
 
 const noteBox = m => '<div class="note warn">' + esc(m) + '</div>';
 
@@ -2300,8 +2323,95 @@ async function listModels(){
   }
 }
 
+/* ── Kiểm tra bảo toàn nội dung sau khi model viết lại ──
+   Bản đầy đủ + unit test: packages/core/preservation.js. Ở đây giữ bản gọn để
+   index.html vẫn chạy offline 1 file; tests/web-inline.test.js kiểm tra các
+   hành vi then chốt của chính hàm này. */
+const escapeRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function preservationCheck(original, proposed){
+  const srcText = String(original || ""), outText = String(proposed || "");
+  const issues = [];
+  const grab = (t, re) => t.match(re) || [];
+  const nums = t => grab(t, /(?<![\p{L}_])\d+(?:[.,]\d+)*/gu);
+  const urls = t => grab(t, /\b(?:https?:\/\/|mailto:)[^\s<>"']+/gi).map(u => u.replace(/[.,;:!?)\]}]+$/g, ""));
+  const emails = t => grab(t, /[\w.!#$%&'*+/=?^_`{|}~-]+@[\w-]+(?:\.[\w-]+)+/g);
+  const dates = t => grab(t, /\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b/g);
+  const cites = t => grab(t, /\[\d+\]|\([A-Z][A-Za-z-]+(?:\s+et al\.?)?,?\s*\d{4}[a-z]?\)/g);
+  const neg = t => grab(t, /\b(?:not|no|never|cannot|can't|don't|doesn't|didn't|won't|isn't|aren't|wasn't|weren't|without|unless|except|neither|nor|none|only|không|chưa|chẳng|ngoại\s+trừ|trừ\s+khi|chỉ)\b/gi).map(s => s.toLowerCase());
+  const cond = t => grab(t, /\b(?:if|unless|when|whenever|provided|assuming|otherwise|nếu|khi|miễn\s+là)\b/gi).map(s => s.toLowerCase());
+  const enumItems = t => {
+    const re = /([A-Z][\w.+#-]*(?:\s+[A-Za-z][\w.+#-]*){0,3}),\s+([A-Z][\w.+#-]*(?:\s+[A-Za-z][\w.+#-]*){0,3}),\s+(?:and|or|và|hoặc)\s+([A-Z][\w.+#-]*(?:\s+[A-Za-z][\w.+#-]*){0,3})/g;
+    const out = []; let m;
+    while ((m = re.exec(t)) !== null) out.push(m[1].trim(), m[2].trim(), m[3].trim());
+    return out;
+  };
+  const pool = list => { const map = new Map(); for (const v of list) map.set(v, (map.get(v) || 0) + 1); return map; };
+  const missingFrom = (a, b) => {
+    const p = pool(b); const missed = [];
+    for (const v of a){ const n = p.get(v) || 0; if (n) p.set(v, n - 1); else missed.push(v); }
+    return missed;
+  };
+  const fail = (code, detail, expected) => issues.push({severity:"failed", code, detail, expected});
+  const warn = (code, detail, expected) => issues.push({severity:"warning", code, detail, expected});
+
+  const missedNums = missingFrom(nums(srcText), nums(outText));
+  if (missedNums.length) fail("number_missing", `Mất ${missedNums.length} giá trị số: ${missedNums.slice(0, 8).join(", ")}`);
+  const relRe = /\bfrom\s+(\d+(?:[.,]\d+)*)[^.]{0,60}?\bto\s+(\d+(?:[.,]\d+)*)/gi;
+  let rel;
+  while ((rel = relRe.exec(srcText)) !== null){
+    const fwd = new RegExp("\\bfrom\\s+" + escapeRe(rel[1]) + "[^.]{0,60}?\\bto\\s+" + escapeRe(rel[2]), "i");
+    const rev = new RegExp("\\bfrom\\s+" + escapeRe(rel[2]) + "[^.]{0,60}?\\bto\\s+" + escapeRe(rel[1]), "i");
+    if (rev.test(outText) && !fwd.test(outText)) fail("numeric_relation_reversed", `Chiều so sánh bị đảo: ${rel[1]} → ${rel[2]}`);
+  }
+
+  const missUrl = missingFrom(urls(srcText), urls(outText));
+  if (missUrl.length) fail("url_missing", `Mất ${missUrl.length} URL: ${missUrl.slice(0, 4).join(", ")}`);
+  const missMail = missingFrom(emails(srcText), emails(outText));
+  if (missMail.length) fail("email_missing", `Mất ${missMail.length} email.`);
+  const missDate = missingFrom(dates(srcText), dates(outText));
+  if (missDate.length) fail("date_missing", `Mất/đổi ${missDate.length} ngày: ${missDate.slice(0, 3).join(", ")}`);
+  const missCite = missingFrom(cites(srcText), cites(outText));
+  if (missCite.length) fail("citation_missing", `Mất ${missCite.length} trích dẫn.`);
+
+  const lostNeg = [...pool(neg(srcText))].filter(([k, n]) => (pool(neg(outText)).get(k) || 0) < n).map(([k]) => k);
+  if (lostNeg.length) fail("negation_removed", `Phủ định bị mất/giảm: ${lostNeg.join(", ")}`);
+  const lostCond = [...pool(cond(srcText))].filter(([k, n]) => (pool(cond(outText)).get(k) || 0) < n).map(([k]) => k);
+  if (lostCond.length) fail("condition_removed", `Điều kiện bị mất/giảm: ${lostCond.join(", ")}`);
+
+  const missItems = missingFrom(enumItems(srcText).map(v => v.toLowerCase()), enumItems(outText).map(v => v.toLowerCase()));
+  if (missItems.length) fail("list_item_removed", `Mục trong danh sách bị mất: ${missItems.join(", ")}`);
+
+  const md = t => ({
+    headings: (t.match(/^[ \t]{0,3}#{1,6}[ \t]+\S/gm) || []).length,
+    bullets: (t.match(/^[ \t]*[-*+][ \t]+\S/gm) || []).length,
+    fences: (t.match(/^[ \t]*```/gm) || []).length,
+    links: (t.match(/\[[^\]\n]+\]\([^)\n]+\)/g) || []).length
+  });
+  const beforeMd = md(srcText), afterMd = md(outText);
+  const lostMd = Object.keys(beforeMd).filter(k => beforeMd[k] > 0 && afterMd[k] < beforeMd[k]);
+  if (lostMd.length){
+    const detail = `Cấu trúc Markdown bị giảm: ${lostMd.map(k => `${k} ${beforeMd[k]}→${afterMd[k]}`).join(", ")}`;
+    if (mdKeep) fail("structure_lost", detail); else warn("structure_lost", detail);
+  }
+
+  return { issues, failed: issues.some(i => i.severity === "failed") };
+}
+
+function paintPreservation(guard){
+  const el = $("preserveReport");
+  if (!el) return;
+  if (!guard){ el.innerHTML = ""; return; }
+  if (!guard.issues.length){
+    el.innerHTML = '<div class="note">Bảo toàn số / URL / email / ngày / phủ định / trích dẫn / cấu trúc: <b>khớp</b>. Ngữ nghĩa sâu chưa được kiểm tra tự động.</div>';
+    return;
+  }
+  const rows = guard.issues.slice(0, 8).map(i => `<li><b>${i.severity === "failed" ? "LỖI" : "cảnh báo"}</b> · ${esc(i.detail)}</li>`).join("");
+  el.innerHTML = `<div class="note ${guard.failed ? "warn" : ""}"><b>Kiểm tra bảo toàn:</b> ${guard.issues.length} vấn đề. Bản gốc vẫn nằm trong ô văn bản — có lỗi thì đừng dùng bản này.<ul style="margin:6px 0 0 18px;padding:0">${rows}</ul></div>`;
+}
+
 async function runRewrite(){
-  const text = src.value.trim();
+  const original = src.value;
+  const text = original.trim();
   const cfg = apiCfg();
   const stats = $("rewriteStats"), out = $("rewriteOut");
   if (!text){ toast("Chưa có văn bản"); return; }
@@ -2331,6 +2441,8 @@ async function runRewrite(){
     }
     const cleaned = cleanText(raw, cleanOpts()).text;
     lastRewrite = {raw, clean: cleaned};
+    lastRewriteOriginal = original;
+    paintPreservation(preservationCheck(original, raw));
     const s0 = Math.round(scoreText(text).total);
     const s1 = Math.round(scoreText(raw).total);
     const s2 = Math.round(scoreText(cleaned).total);
@@ -2347,6 +2459,7 @@ async function runRewrite(){
     out.classList.remove("hidden");
     $("rewriteActions").hidden = false;
   } catch(e){
+    paintPreservation(null);
     stats.innerHTML = `<div class="note warn"><b>Không gọi được:</b> ${esc(e.message)}<br>
       <i>Failed to fetch</i> = CORS / sai Base URL / mạng chặn. <i>HTTP 401</i> = key sai. <i>HTTP 429</i> = hết quota.<br>
       <i>HTTP 404</i> = model không tồn tại hoặc không phục vụ <code>generateContent</code> → nhập <code>gemini-3.8-flash</code>. <i>HTTP 503</i> = model quá tải, app đã tự thử lại và đổi model nhưng vẫn không được → chờ vài phút.</div>`;
@@ -2355,6 +2468,12 @@ async function runRewrite(){
 
 $("btnRunRewrite").addEventListener("click", runRewrite);
 $("btnStopRewrite").addEventListener("click", () => { if (rewriteAbort) rewriteAbort.abort(); });
+$("btnRestoreRewrite").addEventListener("click", () => {
+  if (!lastRewriteOriginal){ toast("Chưa có bản gốc để khôi phục"); return; }
+  src.value = lastRewriteOriginal;
+  updateInputStats(); renderScan(lastRewriteOriginal);
+  toast("Đã khôi phục bản gốc trước khi viết lại");
+});
 $("btnListModels").addEventListener("click", listModels);
 $("apiModelSel").addEventListener("change", e => { if (e.target.value) $("apiModel").value = e.target.value; });
 $("apiProvider").addEventListener("change", e => {
@@ -3047,7 +3166,7 @@ function renderFileReport(r){
     <div class="mgrid">${cards.join("")}</div>
     <div class="row" style="background:none;border:0;padding:0 0 12px">
       ${r.text ? '<button id="btnUseText" class="primary">Đưa văn bản vào ô quét</button>' : ""}
-      <button id="btnMd">Copy Markdown</button>
+      <button id="btnCopyMd">Copy Markdown</button>
       <button id="btnMdDl" class="ghost">Tải .md</button>
     </div>`;
 
@@ -3142,7 +3261,7 @@ function showFile(i){
     src.value = r.text; updateInputStats(); renderScan(r.text); switchLeft("text"); switchTab("scan");
     toast("Đã nạp " + words(r.text) + " từ vào ô quét");
   });
-  const c = $("btnMd");
+  const c = $("btnCopyMd");
   if (c) c.addEventListener("click", () => copy(mdReport(r), "Đã copy báo cáo Markdown"));
   const d = $("btnMdDl");
   if (d) d.addEventListener("click", () => {
@@ -3283,6 +3402,7 @@ function switchTab(name){
 
 /* ────────  CHUỖI: Làm sạch + Humanize theo thứ tự chọn  ──────── */
 let chainOrder = localStorage.getItem("traceChainOrder") === "clean-first" ? "clean-first" : "human-first";
+let chainUndo = "";
 
 function renderOrder(){
   $("orderLabel").textContent = chainOrder === "human-first" ? "Humanize → Làm sạch" : "Làm sạch → Humanize";
@@ -3313,7 +3433,8 @@ $("btnSwapOrder").addEventListener("click", () => {
 
 async function runChain(){
   const hasClean = $("chkClean").checked, hasHuman = $("chkHuman").checked;
-  const text = src.value.trim();
+  const original = src.value;
+  const text = original.trim();
   if (!text){ toast("Chưa có văn bản"); return; }
   if (!hasClean && !hasHuman){ toast("Tích ít nhất một bước"); return; }
   if (hasHuman && !apiCfg().key){
@@ -3346,12 +3467,16 @@ async function runChain(){
     return;
   }
 
+  const guard = preservationCheck(original, cur);
+  chainUndo = original;
+  $("btnUndoChain").disabled = false;
   src.value = cur;
   updateInputStats();
   lastClean = cur;
   renderScan(cur);
   renderClean();
   renderScore();
+  paintPreservation(guard);
 
   const label = order.map(s => s === "human" ? "Humanize" : "Làm sạch").join(" → ");
   if (hasHuman){
@@ -3361,8 +3486,19 @@ async function runChain(){
     $("rewriteOut").textContent = cur;
     $("rewriteOut").classList.remove("hidden");
   } else switchTab("score");
-  toast("Xong · " + Math.round(scoreText(cur).total) + "%");
+  if (guard.failed) toast("Xong nhưng có lỗi bảo toàn — xem báo cáo ở tab Viết lại AI");
+  else toast("Xong · " + Math.round(scoreText(cur).total) + "%");
 }
+
+$("btnUndoChain").addEventListener("click", () => {
+  if (!chainUndo) return;
+  src.value = chainUndo;
+  updateInputStats(); renderScan(chainUndo);
+  chainUndo = "";
+  $("btnUndoChain").disabled = true;
+  paintPreservation(null);
+  toast("Đã khôi phục bản trước khi chạy chuỗi");
+});
 
 $("btnRunChain").addEventListener("click", runChain);
 renderOrder();

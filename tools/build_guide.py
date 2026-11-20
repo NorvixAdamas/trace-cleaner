@@ -231,10 +231,15 @@ def main() -> int:
 
     new = TOC_RE.sub(lambda m: m.group(1) + "\n" + toc_html + "\n" + m.group(2), page)
     new = GUIDE_RE.sub(lambda m: m.group(1) + "\n" + body_html + "\n" + m.group(2), new)
+    check = "--check" in sys.argv[1:]
 
     if new == page:
         print("index.html không đổi (guide đã khớp).")
         return 0
+
+    if check:
+        print("index.html LỆCH GUIDE.md — chạy: python tools/build_guide.py", file=sys.stderr)
+        return 1
 
     PAGE.write_text(new, encoding="utf-8")
     print(f"index.html ← {len(sections)} section · {len(toc)} mục lục · "
