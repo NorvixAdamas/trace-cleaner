@@ -105,7 +105,7 @@ Luồng dữ liệu và quyết định thiết kế: `docs/ARCHITECTURE.md`.
 
 | Lệnh | Kết quả |
 |---|---|
-| `node --test tests` | **44 pass / 0 fail / 0 skip** (~0,4 s) |
+| `node --test tests/*.test.js` | **44 pass / 0 fail / 0 skip** (~0,4 s) |
 | `python tools/build_guide.py --check` | exit 0, guide khớp |
 | `node tools/check_extension.js` | exit 0, manifest v1.4.0, 4 permission |
 | `python tools/sync_core.py --check` | exit 0, bản sao khớp |

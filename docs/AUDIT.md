@@ -140,7 +140,7 @@ Mức độ: **P0** mất dữ liệu/đảo nghĩa, **P1** sai chức năng rõ
 ### F-10 — P1 — Không có test, không có quy trình kiểm tra
 
 - **Hiện trạng:** 0 test trước audit.
-- **Đã thêm:** 44 test Node (`node --test tests`), fixture parity với Python, kiểm tra manifest,
+- **Đã thêm:** 44 test Node (`node --test tests/*.test.js`), fixture parity với Python, kiểm tra manifest,
   kiểm tra guide tái tạo được (`--check`).
 - **Chưa có:** CI workflow, test E2E tự động.
 

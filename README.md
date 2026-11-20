@@ -51,7 +51,7 @@ cat file.txt | python tools/trace_scan.py --strip
 ## Test
 
 ```bash
-node --test tests                     # 44 test, không cần npm install
+node --test tests/*.test.js            # 44 test, không cần npm install
 python tools/build_guide.py --check   # guide trong index.html khớp GUIDE.md
 node tools/check_extension.js         # manifest + import + icon
 python tools/sync_core.py --check     # extension/core khớp packages/core

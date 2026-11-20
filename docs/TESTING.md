@@ -3,13 +3,15 @@
 ## Chạy
 
 ```bash
-node --test tests                 # 44 test, không cần cài dependency
+node --test tests/*.test.js       # 44 test, không cần cài dependency
 python tools/build_guide.py --check
 node tools/check_extension.js
 python tools/sync_core.py --check
 ```
 
 `npm test` / `npm run check` là alias (package.json), nhưng npm không bắt buộc.
+Dùng glob `tests/*.test.js` chứ không phải `node --test tests`: Node 22 trên CI
+không nhận thư mục làm tham số (báo `Cannot find module .../tests`).
 
 Yêu cầu: Node ≥ 20 (đã chạy trên v26.13.0), Python 3.11 cho test parity và các script build.
 Test parity tự `skip` nếu không tìm thấy `python`.
@@ -18,7 +20,7 @@ Test parity tự `skip` nếu không tìm thấy `python`.
 
 | Lệnh | Kết quả |
 |---|---|
-| `node --test tests` | **44 pass, 0 fail**, 0 skip (≈0,4 s) |
+| `node --test tests/*.test.js` | **44 pass, 0 fail**, 0 skip (≈0,4 s) |
 | `python tools/build_guide.py --check` | `index.html không đổi (guide đã khớp)`, exit 0 |
 | `node tools/check_extension.js` | `manifest OK · v1.4.0 · 4 permission`, exit 0 (1 warning: content script chạy mọi trang) |
 | `python tools/sync_core.py --check` | `extension/core khớp packages/core`, exit 0 |
