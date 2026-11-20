@@ -38,6 +38,7 @@ BLANKS = {
 
 KILL = {
     0x200B, 0x2060, 0xFEFF, 0x00AD, 0x180E,
+    0x200E, 0x200F, 0x061C,
     0x2061, 0x2062, 0x2063, 0x2064,
     0x2066, 0x2067, 0x2068, 0x2069,
     0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
@@ -58,7 +59,7 @@ HOMOGLYPHS = {
     "\u0432": "b", "\u0433": "r",
     "\u03BF": "o", "\u03BD": "v", "\u03B1": "a", "\u03B9": "i",
     "\u03BA": "k", "\u03C1": "p", "\u03C5": "u",
-    "\u0131": "i", "\u2212": "-",
+    "\u0131": "i", "\u2212": "-", "\u2010": "-", "\u2011": "-",
 }
 
 NAMES = {
@@ -89,6 +90,8 @@ NAMES = {
     0x2028: "LINE SEPARATOR", 0x2029: "PARAGRAPH SEPARATOR",
     0x0085: "NEXT LINE (NEL)", 0xFE0E: "VARIATION SELECTOR-15",
     0xFE0F: "VARIATION SELECTOR-16",
+    0x200E: "LEFT-TO-RIGHT MARK", 0x200F: "RIGHT-TO-LEFT MARK",
+    0x061C: "ARABIC LETTER MARK",
 }
 
 # category -> (severity, action)
@@ -190,6 +193,34 @@ def stats(text: str) -> dict:
 
 # ────────────────────────────  Làm sạch  ────────────────────────────
 
+def flag_tag_positions(text: str) -> set[int]:
+    """Vị trí tag char thuộc emoji cờ (🏴 + U+E0067…) — phải giữ."""
+    positions: set[int] = set()
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] == "\U0001F3F4":
+            j = i + 1
+            while j < n and 0xE0020 <= ord(text[j]) <= 0xE007F:
+                positions.add(j)
+                j += 1
+            i = j
+        else:
+            i += 1
+    return positions
+
+
+def _audit(index: int, cp: int, ch: str, action: str,
+           replacement: str, reason: str) -> dict:
+    return {
+        "index": index,
+        "codepoint": f"U+{cp:04X}",
+        "char": ch,
+        "action": action,
+        "replacement": replacement,
+        "reason": reason,
+    }
+
+
 def strip_text(
     text: str,
     *,
@@ -198,26 +229,39 @@ def strip_text(
     straight_quotes: bool = True,
     em_dash: str = "comma",
     aggressive: bool = False,
-) -> tuple[str, dict]:
+) -> tuple[str, dict, list[dict]]:
     log: Counter[str] = Counter()
+    audit: list[dict] = []
+    flags = flag_tag_positions(text)
     out: list[str] = []
 
-    for ch in text:
+    for idx, ch in enumerate(text):
         cp = ord(ch)
         cat = classify(ch, cp)
 
+        if cat == "tag" and idx in flags:
+            log["flag_kept"] += 1
+            audit.append(_audit(idx, cp, ch, "kept", ch, "part of emoji flag sequence"))
+            out.append(ch)
+            continue
         if cat in ("tag", "pua"):
             log["security"] += 1
+            audit.append(_audit(idx, cp, ch, "removed", "",
+                                "prompt injection / private use area"))
             continue
         if cat == "invisible":
             log["soft_hyphen" if cp == 0x00AD else "invisible"] += 1
+            audit.append(_audit(idx, cp, ch, "removed", "", "invisible character"))
             continue
         if cat == "bidi":
             log["bidi"] += 1
+            audit.append(_audit(idx, cp, ch, "removed", "", "bidi control reorders text"))
             continue
         if cat == "blank":
             log["blank"] += 1
-            out.append(" " if blank_to_space else ch)
+            replacement = " " if blank_to_space else ch
+            audit.append(_audit(idx, cp, ch, "replaced", replacement, "unusual space"))
+            out.append(replacement)
             continue
         if cat == "joiner":
             if aggressive:
@@ -235,11 +279,16 @@ def strip_text(
             continue
         if cat == "linesep":
             log["linesep"] += 1
+            audit.append(_audit(idx, cp, ch, "replaced", "\n", "line/paragraph separator"))
             out.append("\n")
             continue
         if cat == "homoglyph":
             log["homoglyph"] += 1
-            out.append(HOMOGLYPHS[ch] if fold_homoglyphs else ch)
+            replacement = HOMOGLYPHS[ch] if fold_homoglyphs else ch
+            audit.append(_audit(idx, cp, ch,
+                                "replaced" if fold_homoglyphs else "kept",
+                                replacement, "lookalike character"))
+            out.append(replacement)
             continue
         if cat == "punct":
             kind = PUNCT[cp]
@@ -270,7 +319,7 @@ def strip_text(
     cleaned = re.sub(r"[ \t]+$", "", cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip("\n")
 
-    return cleaned, dict(log)
+    return cleaned, dict(log), audit
 
 
 # ────────────────────────────  CLI  ────────────────────────────
@@ -326,6 +375,8 @@ def main() -> int:
     p.add_argument("--strip", action="store_true", help="in bản đã làm sạch")
     p.add_argument("-o", "--out", help="ghi bản sạch ra file")
     p.add_argument("--json", action="store_true", help="xuất báo cáo JSON")
+    p.add_argument("--audit", action="store_true",
+                   help="kèm audit từng ký tự đã đổi vào JSON (dùng với --json)")
     p.add_argument("--aggressive", action="store_true",
                    help="xoá cả ZWJ/ZWNJ và variation selector")
     p.add_argument("--keep-em-dash", action="store_true", help="không đổi em dash")
@@ -339,25 +390,34 @@ def main() -> int:
     text = read_input(args.path)
     rows = scan(text)
 
-    if args.json:
-        print(json.dumps({
-            "stats": stats(text),
-            "findings": rows,
-            "security_chars": sum(r["count"] for r in rows
-                                  if r["category"] in ACTIONABLE),
-        }, ensure_ascii=False, indent=2))
-    else:
-        print_report(text, rows)
-
     cleaned = None
-    if args.strip or args.out:
-        cleaned, log = strip_text(
+    log: dict = {}
+    audit: list[dict] = []
+    if args.strip or args.out or (args.json and args.audit):
+        cleaned, log, audit = strip_text(
             text,
             aggressive=args.aggressive,
             straight_quotes=not args.keep_quotes,
             em_dash="keep" if args.keep_em_dash else args.em_dash,
         )
-        if not args.json:
+
+    if args.json:
+        payload = {
+            "stats": stats(text),
+            "findings": rows,
+            "security_chars": sum(r["count"] for r in rows
+                                  if r["category"] in ACTIONABLE),
+        }
+        if args.audit:
+            payload["cleaning"] = {
+                "changes": log,
+                "audit": audit,
+                "after": stats(cleaned or ""),
+            }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print_report(text, rows)
+        if cleaned is not None:
             print("\n  Đã sửa:", ", ".join(f"{k}={v}" for k, v in sorted(log.items())) or "không có gì")
             after = stats(cleaned)
             print(f"  sau khi sạch: {after['chars']} ký tự, CV {after['cv']}")
