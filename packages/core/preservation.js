@@ -46,6 +46,16 @@ function diffMissing(expected, found, keyOf = v => v) {
  * @param {string} proposed văn bản model/cleaner trả ra
  * @param {{markdown?:boolean, minLengthRatio?:number, maxLengthRatio?:number, strict?:boolean}} [options]
  */
+/** Từ có nghĩa của một mục liệt kê, đã bỏ dấu câu cuối và ký tự vô hình. */
+function tokensOf(item) {
+  const text = String(item ?? '')
+    .toLowerCase()
+    .replace(/[\u200B-\u200F\u2060\uFEFF]/g, ' ');
+  return (text.match(/[\p{L}\p{N}][\p{L}\p{N}.+#_-]*/gu) || [])
+    .map(token => token.replace(/[.,;:]+$/, ''))
+    .filter(token => token.length >= 2);
+}
+
 export function checkPreservation(original, proposed, options = {}) {
   const o = {
     markdown: true,
@@ -183,7 +193,11 @@ export function checkPreservation(original, proposed, options = {}) {
   run('lists', () => {
     const expected = extractEnumerations(src).flat();
     const found = extractEnumerations(out).flat();
-    const missing = diffMissing(expected, found, item => item.toLowerCase());
+    /* Ranh giới mục cuối không xác định được nếu không parse câu, nên so theo
+       TẬP TỪ của mục: "Zig for this." vẫn chứa "Zig". Mất hẳn một mục — ví dụ
+       "Kotlin, Java, and Python" → "Kotlin and Python" — vẫn bị bắt. */
+    const foundTokens = new Set(found.flatMap(item => tokensOf(item)));
+    const missing = expected.filter(item => !tokensOf(item).every(token => foundTokens.has(token)));
     if (missing.length) {
       report('lists', 'failed', 'list_item_removed',
         `Mục trong danh sách bị mất: ${missing.join(', ')}.`, { expected: missing });
@@ -204,9 +218,12 @@ export function checkPreservation(original, proposed, options = {}) {
   // Không có kiểm tra ngữ nghĩa tự động đáng tin: phải nói thẳng là chưa chạy.
   preservation.semanticReview = NOT_CHECKED;
 
+  const failed = issues.some(issue => issue.severity === 'failed');
   return {
     preservation,
     issues,
+    failed,
+    ok: !failed,
     requiresManualReview: issues.length > 0 || o.strict,
     checksRun,
   };

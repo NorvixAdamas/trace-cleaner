@@ -1,4 +1,7 @@
-# Unified Baseline — Trace Cleaner 2.1
+# Unified Baseline — Trace Cleaner 2.1 (lịch sử)
+
+> **Trạng thái:** baseline của 2.1, giữ để tra cứu. HEAD thực tế là `056cd6b` (ba commit 2.1 đã
+> push). Baseline 2.2: [TRACE_CLEANER_2_2_BASELINE.md](TRACE_CLEANER_2_2_BASELINE.md).
 
 Ngày lập: 2026-11-20. Mục đích: chốt **hiện trạng thật** trước khi sửa, để báo cáo cuối không
 phải suy đoán. Mọi số liệu dưới đây lấy từ lệnh chạy trong repo, không lấy từ tài liệu cũ.

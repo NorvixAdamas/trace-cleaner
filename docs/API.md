@@ -1,150 +1,167 @@
-# API nội bộ
+# API và hợp đồng dữ liệu
 
-Các module dưới `packages/` là ESM thuần, không dependency, chạy Node ≥ 20 và trình duyệt hiện đại.
-Chưa phải API công khai; có thể đổi trước bản ổn định.
+Mọi kết quả mang `schemaVersion: '1.0'`. Engine báo `ENGINE_VERSION = '2.2'`, prompt báo
+`PROMPT_VERSION = '2.2.0'`.
 
-## Làm sạch — `packages/core/cleaning.js` (canonical)
-
-```js
-import { cleanText, countsFor, protectRegions, segmentText, TELL_PATTERNS } from './packages/core/cleaning.js';
-
-cleanText(text, {
-  markdown: true,             // false = xoá marker Markdown, giữ nội dung
-  emDash: 'comma',            // 'comma' | 'hyphen' | 'space' | 'keep'
-  straightQuotes: true,
-  blankToSpace: true,
-  foldHomoglyphs: true,
-  removeJoiners: false,       // chỉ bật khi người dùng chọn rõ
-  removeVariationSelectors: false,
-})
-// {
-//   text, log, warnings,
-//   audit: [{ index, codePoint, hex, char, category, action, replacement, reason }],
-//   protectedRegions: number,
-//   stats: { vis, blank, pua, quotes, emdash, dbl, tells, joinerKept, vsKept }
-// }
-
-protectRegions(text) // [{ type:'code'|'inlineCode'|'link'|'autolink'|'url'|'email', start, end, value }]
-segmentText(text)    // [{ type, value, start }] — đoạn chữ và đoạn bảo vệ xen kẽ
-countsFor(text)      // số liệu cho UI; không phải xác suất, không phải kết luận tác giả
-```
-
-Bất biến: không xoá mục danh sách, không đổi phủ định, giữ joiner/VS/emoji cờ, audit dùng **offset
-trong chuỗi gốc** (UTF-16), vùng bảo vệ giữ nguyên byte.
-
-## Unicode — `packages/core/unicode.js`
+## Làm sạch
 
 ```js
-import { scan, clean, classify, summary, nameOf, isFlagSequence, ACTIONABLE } from './packages/core/unicode.js';
-
-classify('a')  // 'other'|'blank'|'invisible'|'bidi'|'joiner'|'tag'|'pua'|'vs'|'emoji'|'homoglyph'|'linesep'|'punct'
-scan(text)     // [{ cp, hex, name, category, severity, action, count, positions, flag }]
-clean(text, { normalize:'NFC', blankToSpace:true, foldHomoglyphs:true, straightQuotes:true,
-              emDash:'comma', removeJoiners:false, removeVariationSelectors:false })
-// { text, log, audit, warnings }
+TraceCore.cleanText(text, { markdown: true }) // →
+{
+  text, stats, audit: [{ index, char, category, action }],
+  warnings: [], log: {}, segments, offsetSystem: 'utf16-source',
+  engineVersion: '2.2', schemaVersion: '1.0'
+}
 ```
 
-## Thực thể — `packages/core/entities.js`
+- `audit[].index` là UTF-16 index trên **chuỗi gốc**.
+- `markdown: false` → bỏ marker, giữ nội dung; code fence được `unfence` chứ không bị regex văn xuôi
+  chạm vào.
+- Không xoá mục danh sách, phủ định, điều kiện, ngoại lệ, số, URL, email, trích dẫn.
+
+## Quét Unicode
 
 ```js
-extractEntities(text)     // { urls, emails, versions, dates, percentages, currencies,
-                          //   citations, quotes, acronyms, properNouns, numbers }
-numberCounts(text)        // Map<number, count>
-extractEnumerations(text) // [['Kotlin','Java','Python'], ...]
-extractFromTo(text)       // [{ from:'4.2', to:'2.1', unit:'seconds' }]
-countStructure(text)      // { headings, bullets, ordered, fences, links, bold, tables }
+TraceCore.scan(text) // → [{ codepoint, category, count, name, severity, action, indexes }]
+TraceCore.countsFor(text) // → { vis, pua, blank, quotes, emdash, tells }
 ```
 
-## Bảo toàn — `packages/core/preservation.js`
+## Bảo toàn
 
 ```js
-checkPreservation(original, proposed, { markdown:true, minLengthRatio:0.55, maxLengthRatio:1.45, strict:false })
-// {
-//   preservation: { numbers, urls, emails, dates, entities, negation, conditions,
-//                   citations, structure, lists, length: 'passed'|'warning'|'failed',
-//                   semanticReview: 'not_checked' },
-//   issues: [{ check, severity:'warning'|'failed', code, detail, expected? }],
-//   requiresManualReview: boolean,
-//   checksRun: string[]
-// }
+TraceCore.checkPreservation(original, proposed, { markdown, strict }) // →
+{
+  preservation: { numbers: 'passed'|'failed'|'warning'|'not-checked', ... },
+  issues: [{ check, severity: 'failed'|'warning', code, detail, expected? }],
+  failed: boolean, ok: boolean,
+  requiresManualReview: boolean,
+  checksRun: string[]
+}
 ```
 
-`semanticReview` **luôn** `not_checked`. Mã lỗi: `number_missing`, `numeric_relation_reversed`,
-`url_missing`, `email_missing`, `date_missing`, `citation_missing`, `negation_removed`,
-`condition_removed`, `list_item_removed`, `structure_lost`, `length_changed`, `entity_missing`.
+Mã issue: `number_missing`, `numeric_relation_reversed`, `url_missing`, `email_missing`,
+`date_missing`, `negation_removed`, `condition_removed`, `quote_missing`, `list_item_removed`,
+`markdown_structure_changed`, `length_changed`.
 
-## Prompt — `packages/writing/prompts.js` (canonical)
+`preservation.semanticReview` luôn là `'not-checked'`: không có kiểm tra ngữ nghĩa tự động.
+
+## Prompt
 
 ```js
-import {
-  PROMPT_VERSION, PRESERVATION_RULES, PROMPT_BASE, MODES,
-  MD_KEEP_CLAUSE, MD_PLAIN_CLAUSE, SELF_EDIT, buildPrompt, webPresets, WEB_PRESET_KEYS,
-} from './packages/writing/prompts.js';
-
-PROMPT_VERSION            // '2.1.0'
-Object.keys(MODES)        // general, proofread, clarity, concise, natural,
-                          // professional, academic, cover, email
-buildPrompt('concise', { markdown: true })
-// PROMPT_BASE + "## Editing mode: Concise" + instruction + MD_KEEP_CLAUSE
+TraceWriting.buildPrompt(mode, { markdown, custom }) // → string
+TraceWriting.MODES // → [{ id, label, purpose, instruction }]
 ```
 
-Mọi prompt bắt đầu bằng khối "Non-negotiable preservation" (dữ kiện, danh sách, phủ định, trích dẫn,
-không bịa). Không có chỉ dẫn xoá nội dung.
+9 chế độ: `general`, `proofread`, `clarity`, `concise`, `natural`, `professional`, `academic`,
+`cover`, `email`. Prompt tự soạn của người dùng được giữ, nhưng luôn ghép thêm mệnh đề bảo toàn +
+Markdown từ registry.
 
-## Diff — `packages/core/diff.js`
+## Gợi ý ngữ pháp
 
 ```js
-diffWords(before, after)   // [{ type:'equal'|'insert'|'delete', value }]
-diffStats(ops)             // { added, removed, kept }
-similarity(a, b)           // 0..1
-applyEdits(text, [{ find, replace, index? }]) // { text, applied, rejected }
-diffLines(ops, width)      // dòng có tiền tố '+ ' / '- ' / '  '
+TraceWriting.analyze(text, { language }) // →
+{ language, supported, suggestions: [Suggestion], truncated }
 ```
 
-## Tài liệu — `packages/core/document.js`
+```json
+{
+  "id": "suggestion-001",
+  "type": "grammar",
+  "severity": "warning",
+  "language": "en",
+  "start": 12,
+  "end": 19,
+  "original": "has went",
+  "replacement": "has gone",
+  "reason": "Present perfect cần quá khứ phân từ.",
+  "source": "deterministic-rule",
+  "ruleId": "en.irregular-participle",
+  "accepted": false
+}
+```
+
+`applySuggestion(text, suggestion, { sourceRevision })` và
+`applySuggestions(text, list)` trả `{ text, applied, rejected, conflicts }`; từ chối khi `original`
+không còn khớp hoặc hai gợi ý chồng lấn.
+
+## Diff và tài liệu
 
 ```js
-const doc = new DocumentSession(text, { language:'vi', format:'md' });
-doc.propose(newText); doc.acceptAll(); doc.reject(); doc.commit(text,'edit');
-doc.undo(); doc.redo(); doc.export('md'); doc.diff(); doc.snapshot();
+TraceCore.diffWords(before, after) // → [{ type: 'equal'|'insert'|'delete', value }]
+TraceCore.diffStats(ops)           // → { added, removed, kept }
+TraceCore.applyEdits(text, edits, { sourceRevision }) // →
+{ text, applied, rejected, conflicts, sourceRevision, schemaVersion }
 ```
 
-## Markdown — `packages/core/markdown.js`
+`edits[]`: `{ find, replace }` | `{ find, replace, occurrence }` | `{ find, replace, index }` |
+`{ start, end, replace }`.
+
+- `index` là **vị trí chính xác** của `find`; lệch ⇒ `conflicts[].reason = 'text_mismatch'`.
+- Không có `index`/`occurrence` mà `find` xuất hiện nhiều lần ⇒ `rejected[].reason = 'ambiguous'`.
+- Chồng lấn ⇒ cả hai vào `conflicts`.
 
 ```js
-splitMarkdown(text)       // [{ type:'text'|'code'|'inlineCode'|'link'|'autolink', value }]
-transformProse(text, fn)  // chỉ đổi đoạn 'text'
-stripMarkdown(text)       // { text, removed }
+const doc = new TraceCore.DocumentSession(original);
+doc.propose(text, { id })        // → { id, baseRevision }
+doc.acceptProposal(id)           // → { ok:true, revision } | { ok:false, error }
+doc.acceptAll()                  // → như trên
+doc.commit(text, reason)         // → revision
+doc.undo() / doc.redo() / doc.restoreOriginal()
+doc.snapshot()                   // → { revision, pendingProposal, canUndo, canRedo, staleCount, ... }
+doc.diffAgainst()                // diff original → working
+doc.export('txt'|'md')           // → { text, revision }  (không sửa bản gốc)
 ```
 
-## Extension
+Lỗi: `STALE_DOCUMENT_REVISION`, `NO_PENDING_PROPOSAL`, `PROPOSAL_NOT_FOUND`.
+
+## Provider
 
 ```js
-// content.js / panel.js → background
-chrome.runtime.sendMessage({
-  type: 'humanize', text,
-  cfg: { prompt, markdown, mode, provider, base, model, key }
-})
-// → { text, preservation, promptVersion, mode }
-// → { error, code, retryable }
+TraceProviders.generate(cfg, {
+  text, prompt, signal, timeoutMs, requestId, fetchImpl, retryDelayMs, onModelSwitch
+}) // → { text, model, provider, requestId, schemaVersion }
 ```
 
-`cfg.mode` là khoá trong `MODES`. Prompt tự soạn vẫn bị nối thêm khối chế độ + mệnh đề Markdown.
+`cfg`: `{ provider: 'google'|'openai', key, base?, model? }`.
 
-Mã lỗi: `VALIDATION_ERROR`, `CONFIG_ERROR`, `PROVIDER_AUTH_ERROR`, `PROVIDER_RATE_LIMIT`,
-`PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_MODEL_UNAVAILABLE`, `PROVIDER_EMPTY_RESPONSE`,
-`PROVIDER_BAD_RESPONSE`, `NETWORK_ERROR`, `CANCELLED`. Timeout mặc định 60s (`AbortController`).
+Hành vi: 404 → thử model fallback (Google), 5xx → retry một lần, 401/403/429/timeout/cancel → dừng
+ngay và trả mã tương ứng. `TraceProviders.RequestRegistry` giữ `requestId → AbortController`
+(`start`, `cancel`, `finish`, `cancelAll`).
 
-Bundle cho content script / side panel: `extension/core/bundle.js` đặt `globalThis.TraceCore` với
-cùng API `cleanText`/`countsFor`/`checkPreservation`/`scan`/`diffWords`/`DocumentSession`.
-
-## CLI — `tools/trace_scan.py`
-
-```
-python tools/trace_scan.py FILE [--strip] [-o OUT] [--json [--audit]]
-       [--aggressive] [--keep-quotes] [--em-dash comma|hyphen|space|keep]
-       [--fail-on-security]
+```js
+TraceProviders.validateConfiguration(cfg) // → { ok:true, ... } | { ok:false, error }
+TraceProviders.listModels(cfg)            // → string[]
+TraceProviders.validateBaseUrl(url)       // → { ok, error? }
 ```
 
-Exit code `0` bình thường, `2` khi `--fail-on-security` và có ký tự nguy hiểm. `--json --audit` trả
-`{ stats, findings[], security_chars, cleaning:{ changes, audit, after } }`.
+## File / parser
+
+```js
+TraceCore.PARSER_LIMITS                    // hằng số đã freeze
+TraceCore.validateZipEntryName(name)       // → { ok, reason? }
+TraceCore.checkZipBudget(entries)          // → { ok, total } | { ok:false, reason, detail }
+TraceCore.assertSafeXml(xml, { name })     // → true | throw { code:'PARSER_ERROR' }
+TraceCore.xmlDepth(xml)                    // → number
+TraceCore.clampText(text)                  // → { text, truncated }
+```
+
+`entries[]`: `{ name, size, compressedSize, method }`. `reason`: `too_many_entries`,
+`entry_too_large`, `suspicious_expansion`, `archive_too_large`, `unsupported_method`,
+`path_traversal`, `absolute_path`, `backslash`, `nul_byte`, `too_long`, `empty`.
+
+## Hợp đồng Python
+
+`tools/trace_scan.py --json` trả:
+
+```json
+{
+  "stats": { "words": 0, "sentences": 0, "chars": 0, "cv": 0, "em_dash_per_1k": 0 },
+  "findings": [{ "codepoint": "U+200B", "cp": 8203, "category": "invisible", "count": 1, "severity": "HIGH", "name": "...", "action": "..." }],
+  "security_chars": 1,
+  "cleaned": "...",
+  "cleaning": { "changes": { "invisible": 1 }, "audit": [], "after": {} }
+}
+```
+
+Fixture dùng chung: `tests/fixtures/parity-cases.json` — mỗi case có `text` và `cleaned` mà **cả**
+JS core và Python CLI phải cho ra.

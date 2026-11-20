@@ -6,16 +6,23 @@
  *  - Chỉ sửa những gì giải thích được: ký tự vô hình, khoảng trắng lạ, kiểu chữ.
  *  - KHÔNG xoá mục trong danh sách, KHÔNG đảo phủ định, KHÔNG sửa câu.
  *  - Vùng có cấu trúc (URL, email, code fence, inline code, link Markdown,
- *    autolink) được bảo vệ nguyên byte, không chạy regex văn xuôi lên chúng.
+ *    autolink) được bảo vệ nguyên byte. Không có bước chuẩn hoá văn xuôi nào
+ *    chạy xuyên qua vùng bảo vệ: mỗi đoạn chữ được dọn riêng, nên khoảng trắng
+ *    cuối dòng, dòng trống và tab bên trong code fence còn nguyên.
  *  - ZWJ/ZWNJ/variation selector/emoji cờ mặc định được giữ (xem unicode.js).
- *  - Mọi thay đổi ghi vào audit kèm vị trí trong chuỗi gốc.
+ *  - Mọi thay đổi ghi vào audit kèm vị trí UTF-16 trong chuỗi gốc.
  */
 
-import { clean as cleanUnicode, scan, classify } from './unicode.js';
-import { splitMarkdown, stripMarkdown } from './markdown.js';
+import { clean as cleanUnicode, scan, classify, OFFSET_SYSTEM } from './unicode.js';
+import { splitMarkdown, stripMarkdownInline, unfence } from './markdown.js';
 
 const URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"'`]+/gi;
 const EMAIL_RE = /[\w.!#$%&'*+/=?^_`{|}~-]+@[\w-]+(?:\.[\w-]+)+/g;
+
+/** Phiên bản schema kết quả — mọi bề mặt trả cùng shape. */
+export const SCHEMA_VERSION = '1.0';
+/** Phiên bản engine hành vi (khác version sản phẩm/package). */
+export const ENGINE_VERSION = '2.2';
 
 /** Nhãn vùng được bảo vệ, dùng cho UI/audit. */
 export const PROTECTED_TYPES = Object.freeze(['code', 'inlineCode', 'link', 'autolink', 'url', 'email']);
@@ -77,23 +84,30 @@ export function segmentText(text) {
   return out;
 }
 
+/**
+ * Dọn khoảng trắng văn xuôi. Chỉ chạy trên đoạn chữ, không bao giờ trên code.
+ * Không thêm khoảng trắng sau dấu phẩy chữ số ("1,234" phải giữ nguyên).
+ */
 function tidyProse(value) {
   return value
     .replace(/[ \t]{2,}/g, ' ')
-    .replace(/[ \t]+([,.;:!?])/g, '$1');
+    .replace(/[ \t]+([,.;:!?])/g, '$1')
+    .replace(/([,;:])(?=[A-Za-zÀ-ỹ])/g, '$1 ')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n');
 }
 
-/**
- * Làm sạch một đoạn chữ nhưng giữ nguyên khoảng trắng ở hai đầu.
- * Nếu bỏ bước này, "see " + URL sẽ dính thành "seehttps://…".
- */
+/** Làm sạch một đoạn chữ nhưng giữ nguyên khoảng trắng ở hai đầu đoạn. */
 function cleanProseStrict(value, options) {
   const head = (value.match(/^[ \t\n]+/) || [''])[0];
   const tail = (value.match(/[ \t\n]+$/) || [''])[0];
   const coreText = value.slice(head.length, value.length - tail.length);
-  if (!coreText) return { text: value, log: {}, audit: [], warnings: [] };
+  if (!coreText) return { text: value, log: {}, audit: [], warnings: [], segments: [] };
   const result = cleanUnicode(coreText, options);
-  return { ...result, text: head + tidyProse(result.text) + tail };
+  // cleanUnicode đếm trên `coreText`, nên phải cộng bù phần head đã cắt để
+  // audit vẫn trỏ đúng vị trí trong đoạn gốc.
+  const audit = result.audit.map(entry => ({ ...entry, index: entry.index + head.length }));
+  return { ...result, audit, text: head + tidyProse(result.text) + tail };
 }
 
 /**
@@ -101,14 +115,16 @@ function cleanProseStrict(value, options) {
  *
  * @param {string} text
  * @param {object} [options]
- * @param {boolean} [options.markdown=true] false = xoá marker Markdown (giữ nội dung)
+ * @param {boolean} [options.markdown=true] false = xoá marker Markdown (giữ nội dung và code)
  * @param {string} [options.emDash='comma'] 'comma' | 'hyphen' | 'space' | 'keep'
  * @param {boolean} [options.straightQuotes=true]
  * @param {boolean} [options.blankToSpace=true]
+ * @param {boolean} [options.foldHomoglyphs=true]
  * @param {boolean} [options.removeJoiners=false] chỉ khi người dùng chọn rõ
  * @param {boolean} [options.removeVariationSelectors=false]
+ * @param {boolean} [options.trimEnds=true] cắt khoảng trắng thừa ở hai đầu tài liệu
  * @returns {{text:string, log:Record<string,number>, audit:Array<object>, warnings:string[],
- *   protectedRegions:number, stats:{vis:number,blank:number,pua:number,quotes:number,emdash:number,dbl:number}}}
+ *   protectedRegions:number, stats:object, schemaVersion:string, engineVersion:string, offsetSystem:string}}
  */
 export function cleanText(text, options = {}) {
   const o = {
@@ -119,25 +135,34 @@ export function cleanText(text, options = {}) {
     foldHomoglyphs: true,
     removeJoiners: false,
     removeVariationSelectors: false,
+    trimEnds: true,
     ...options,
   };
   const source = String(text ?? '');
-  let working = source;
-  if (!o.markdown) working = stripMarkdown(working).text;
-
   const log = {};
   const warnings = [];
   const audit = [];
   let protectedRegions = 0;
 
-  const bump = (key, n = 1) => { log[key] = (log[key] || 0) + n; };
+  const bump = (key, n = 1) => { if (n) log[key] = (log[key] || 0) + n; };
 
-  let out = '';
-  for (const seg of segmentText(working)) {
+  const pieces = [];
+  for (const seg of segmentText(source)) {
     if (seg.type !== 'text') {
       protectedRegions += 1;
       bump('protected');
-      out += seg.value;
+      let value = seg.value;
+      if (!o.markdown) {
+        if (seg.type === 'code') {
+          value = unfence(value);
+          bump('markdown');
+        } else if (seg.type === 'inlineCode') {
+          value = value.slice(1, -1);
+          bump('markdown');
+        }
+      }
+      // Byte bên trong vùng bảo vệ không đi qua bất kỳ phép dọn văn xuôi nào.
+      pieces.push({ type: seg.type, text: value });
       continue;
     }
     if (!seg.value) continue;
@@ -153,24 +178,42 @@ export function cleanText(text, options = {}) {
     for (const note of result.warnings) {
       if (!warnings.includes(note)) warnings.push(note);
     }
-    // Vị trí audit phải tính theo chuỗi gốc, không theo đoạn.
+    // Vị trí audit phải tính theo chuỗi gốc, không theo đoạn và không theo bản
+    // đã normalize: cleanUnicode chỉ ghi index trong chuỗi nó nhận (đoạn gốc).
     for (const entry of result.audit) audit.push({ ...entry, index: entry.index + seg.start });
-    out += result.text;
+
+    let value = result.text;
+    if (!o.markdown) {
+      const inline = stripMarkdownInline(value);
+      value = inline.text;
+      bump('markdown', inline.removed);
+    }
+    pieces.push({ type: 'text', text: value });
   }
 
-  out = out
-    .replace(/[ \t]+$/gm, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/^\n+|\n+$/g, '');
+  if (o.trimEnds) {
+    const first = pieces.find(piece => piece.text.length);
+    if (first && first.type === 'text') first.text = first.text.replace(/^[ \t\n]+/, '');
+    const last = [...pieces].reverse().find(piece => piece.text.length);
+    if (last && last.type === 'text') last.text = last.text.replace(/[ \t\n]+$/, '');
+  }
 
-  return {
+  const out = pieces.map(piece => piece.text).join('');
+  const result = {
     text: out,
     log,
     audit,
     warnings,
     protectedRegions,
     stats: countsFor(out),
+    schemaVersion: SCHEMA_VERSION,
+    engineVersion: ENGINE_VERSION,
+    offsetSystem: OFFSET_SYSTEM,
   };
+  if (!o.markdown) {
+    warnings.push('Đã xoá marker Markdown: cấu trúc heading/bullet/link không còn, chỉ giữ nội dung.');
+  }
+  return result;
 }
 
 /** Các cụm "tell" chỉ để ĐO, không bao giờ dùng để xoá. */

@@ -96,24 +96,131 @@ export function similarity(before, after) {
 }
 
 /**
- * Áp một tập thay thế lên văn bản, kiểm tra vị trí để không ghi sai chỗ.
+ * Áp một tập thay thế lên văn bản, KHÔNG áp tuần tự trên chuỗi đang đổi.
+ *
+ * Vấn đề của cách cũ: mỗi lần thay đổi độ dài, offset của các edit sau lệch
+ * theo, và `indexOf` có thể khớp một chỗ khác cùng nội dung. Cách mới:
+ *   1. Chốt vị trí trên MỘT snapshot của chuỗi gốc.
+ *   2. Kiểm tra `source.slice(start, end) === find` trước khi nhận.
+ *   3. Từ chối edit mơ hồ (find xuất hiện nhiều lần mà không có index/occurrence)
+ *      thay vì ghi vào chỗ đầu tiên.
+ *   4. Phát hiện chồng lấn và áp theo thứ tự giảm dần.
+ *
  * @param {string} text
- * @param {Array<{find:string, replace:string, index?:number}>} edits
+ * @param {Array<{find?:string, replace?:string, replacement?:string, index?:number,
+ *   start?:number, end?:number, occurrence?:number}>} edits
+ * @param {{sourceRevision?:string|null}} [options]
+ * @returns {{text:string, applied:Array<object>, rejected:Array<object>, conflicts:Array<object>,
+ *   sourceRevision:string|null, schemaVersion:string}}
  */
-export function applyEdits(text, edits) {
-  let out = String(text);
+export function applyEdits(text, edits, options = {}) {
+  const source = String(text ?? '');
   const applied = [];
   const rejected = [];
-  for (const edit of edits || []) {
-    const at = typeof edit.index === 'number' ? out.indexOf(edit.find, edit.index) : out.indexOf(edit.find);
-    if (!edit.find || at < 0) {
-      rejected.push({ edit, reason: 'not_found' });
+  const conflicts = [];
+  const planned = [];
+
+  const nthIndexOf = (needle, occurrence) => {
+    let at = -1;
+    for (let n = 0; n < occurrence; n += 1) {
+      at = source.indexOf(needle, at + 1);
+      if (at < 0) return -1;
+    }
+    return at;
+  };
+
+  for (const raw of edits || []) {
+    if (!raw || typeof raw !== 'object') {
+      rejected.push({ edit: raw, reason: 'invalid_edit' });
       continue;
     }
-    out = out.slice(0, at) + edit.replace + out.slice(at + edit.find.length);
-    applied.push({ ...edit, index: at });
+    const edit = { ...raw };
+    const find = typeof edit.find === 'string' ? edit.find : '';
+    const replacement = String(edit.replace ?? edit.replacement ?? '');
+    let start;
+    let end;
+
+    if (typeof edit.start === 'number' && typeof edit.end === 'number') {
+      start = edit.start;
+      end = edit.end;
+    } else if (typeof edit.index === 'number') {
+      // `index` là vị trí CHÍNH XÁC của `find` trên chuỗi gốc. Cố tình không
+      // dùng indexOf(index) nữa: như vậy một index lệch sẽ trượt sang chỗ khác
+      // cùng nội dung và sửa nhầm. Sai vị trí ⇒ conflict text_mismatch.
+      if (edit.index < 0 || edit.index > source.length) {
+        conflicts.push({ edit, reason: 'out_of_bounds', detail: `index ${edit.index} ngoài chuỗi ${source.length} ký tự.` });
+        continue;
+      }
+      start = edit.index;
+      end = start + (find ? find.length : 0);
+    } else if (find) {
+      const occurrence = typeof edit.occurrence === 'number' ? edit.occurrence : 0;
+      if (occurrence > 0) {
+        start = nthIndexOf(find, occurrence);
+        if (start < 0) {
+          rejected.push({ edit, reason: 'not_found' });
+          continue;
+        }
+      } else {
+        start = source.indexOf(find);
+        if (start < 0) {
+          rejected.push({ edit, reason: 'not_found' });
+          continue;
+        }
+        if (source.indexOf(find, start + 1) >= 0) {
+          rejected.push({ edit, reason: 'ambiguous', detail: 'find xuất hiện nhiều lần; cần index hoặc occurrence.' });
+          continue;
+        }
+      }
+      end = start + find.length;
+    } else {
+      rejected.push({ edit, reason: 'invalid_edit' });
+      continue;
+    }
+
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end > source.length) {
+      conflicts.push({ edit, reason: 'out_of_bounds', detail: `[${start}, ${end}) ngoài chuỗi ${source.length} ký tự.` });
+      continue;
+    }
+    if (find && source.slice(start, end) !== find) {
+      conflicts.push({ edit, reason: 'text_mismatch', detail: 'Đoạn tại vị trí này không khớp `find`.' });
+      continue;
+    }
+    planned.push({ start, end, replacement, edit });
   }
-  return { text: out, applied, rejected };
+
+  // Chồng lấn: hai edit cùng sửa một vùng thì không đoán ý — loại cả hai.
+  planned.sort((a, b) => a.start - b.start || a.end - b.end);
+  const accepted = [];
+  let cursorEnd = -1;
+  for (const item of planned) {
+    if (item.start < cursorEnd) {
+      conflicts.push({ edit: item.edit, reason: 'overlap', detail: `[${item.start}, ${item.end}) chồng lấn edit trước.` });
+      const previous = accepted.pop();
+      if (previous) conflicts.push({ edit: previous.edit, reason: 'overlap', detail: 'Bị edit sau chồng lấn.' });
+      cursorEnd = accepted.length ? accepted[accepted.length - 1].end : -1;
+      continue;
+    }
+    accepted.push(item);
+    cursorEnd = item.end;
+  }
+
+  let out = source;
+  for (let i = accepted.length - 1; i >= 0; i -= 1) {
+    const item = accepted[i];
+    out = out.slice(0, item.start) + item.replacement + out.slice(item.end);
+    applied.push({ ...item.edit, index: item.start, end: item.end, replacement: item.replacement });
+  }
+  applied.reverse();
+
+  return {
+    text: out,
+    applied,
+    rejected,
+    conflicts,
+    sourceRevision: options.sourceRevision ?? null,
+    schemaVersion: '1.0',
+  };
 }
 
 /** Chuyển diff thành mảng dòng có nhãn để UI hiển thị. */

@@ -82,11 +82,17 @@ export function numberCounts(text) {
 
 /** Các phần tử của một phép liệt kê "A, B, and C" (tối đa 3 mục). */
 export function extractEnumerations(text) {
-  const re = /([A-Z][\w.+#-]*(?:\s+[A-Za-z][\w.+#-]*){0,3}),\s+([A-Z][\w.+#-]*(?:\s+[A-Za-z][\w.+#-]*){0,3}),\s+(?:and|or|và|hoặc)\s+([A-Z][\w.+#-]*(?:\s+[A-Za-z][\w.+#-]*){0,3})/g;
+  // Khoảng trắng GIỮA CÁC TỪ trong một mục chỉ được là space/tab: dùng \s sẽ
+  // nuốt luôn "\n\nCâu tiếp theo", khiến mục cuối bị so sánh sai (false positive
+  // list_item_removed khi bản gốc có ký tự vô hình trước dấu xuống dòng).
+  const ITEM = '([A-Z][\\w.+#-]*(?:[ \\t]+[A-Za-z][\\w.+#-]*){0,3})';
+  const re = new RegExp(`${ITEM},\\s+${ITEM},\\s+(?:and|or|và|hoặc)\\s+${ITEM}`, 'g');
   const out = [];
   let m;
+  // Cắt mục tại dấu kết câu: "Java. Then we" chỉ còn "Java".
+  const cut = value => value.trim().replace(/[.!?](?=\s|$)[\s\S]*$/, '').trim();
   while ((m = re.exec(text)) !== null) {
-    out.push([m[1].trim(), m[2].trim(), m[3].trim()]);
+    out.push([cut(m[1]), cut(m[2]), cut(m[3])]);
   }
   return out;
 }

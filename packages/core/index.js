@@ -9,4 +9,5 @@ export {
 } from './preservation.js';
 export { diffWords, diffStats, diffLines, similarity, applyEdits, tokenize } from './diff.js';
 export { DocumentSession, createDocument } from './document.js';
-export { splitMarkdown, transformProse, stripMarkdown, countStructure } from './markdown.js';
+export { splitMarkdown, transformProse, stripMarkdown, countStructure, stripMarkdownInline, unfence } from './markdown.js';
+export { PARSER_LIMITS, validateZipEntryName, checkZipBudget, xmlDepth, assertSafeXml, clampText } from './limits.js';

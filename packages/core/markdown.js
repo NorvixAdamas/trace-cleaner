@@ -1,18 +1,28 @@
 /**
  * packages/core/markdown.js — tách văn bản Markdown thành đoạn để chỉ sửa phần chữ.
  *
- * Không phải parser Markdown đầy đủ (dự án chưa dùng thư viện nào); đủ để bảo
- * vệ code fence, code span, link và autolink khỏi các phép biến đổi regex.
+ * Không phải parser Markdown đầy đủ (dự án chưa dùng thư viện nào). Mục tiêu hẹp
+ * nhưng phải an toàn: bảo vệ code fence (``` và ~~~, dài bao nhiêu dấu cũng được),
+ * code span, link/ảnh, autolink, blockquote lồng nhau. Phần không nhận diện được
+ * vẫn đi qua như văn xuôi nhưng không bị xoá cấu trúc.
+ *
+ * Bất cứ cú pháp nào không chắc chắn đều được coi là "không được chạm": thà bỏ
+ * sót một chỗ sửa còn hơn phá nội dung.
  */
 
-const FENCE = /^[ \t]*```[^\n]*\n[\s\S]*?^[ \t]*```[ \t]*$/gm;
+/** Fence ``` hoặc ~~~, 3 dấu trở lên, cho phép info string. */
+const FENCE = /^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]*\1[ \t]*$/gm;
+/** Fence chưa đóng ở cuối file: bảo vệ tới hết file thay vì coi là văn xuôi. */
+const OPEN_FENCE = /^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*$/m;
 const INLINE_CODE = /`[^`\n]+`/g;
 const LINK = /!?\[[^\]\n]*\]\([^)\n]*\)/g;
 const AUTOLINK = /<(?:https?:\/\/|mailto:)[^>\s]+>/g;
+/** Thẻ HTML/XML: thuộc tính không được bị coi là văn xuôi (dấu phẩy, khoảng trắng). */
+const HTML_TAG = /<\/?[A-Za-z][^>\n]{0,400}>/g;
 
 /**
  * @param {string} text
- * @returns {Array<{type:'text'|'code'|'inlineCode'|'link'|'autolink', value:string}>}
+ * @returns {Array<{type:'text'|'code'|'inlineCode'|'link'|'autolink'|'html', value:string}>}
  */
 export function splitMarkdown(text) {
   const source = String(text ?? '');
@@ -29,6 +39,14 @@ export function splitMarkdown(text) {
   collect(INLINE_CODE, 'inlineCode');
   collect(LINK, 'link');
   collect(AUTOLINK, 'autolink');
+  collect(HTML_TAG, 'html');
+
+  // Fence mở mà không đóng: phần còn lại là code, không phải văn xuôi.
+  const hasClosedFence = spans.some(span => span.type === 'code');
+  if (!hasClosedFence) {
+    const open = OPEN_FENCE.exec(source);
+    if (open) spans.push({ start: open.index, end: source.length, type: 'code', value: open[0] });
+  }
 
   spans.sort((a, b) => a.start - b.start || b.end - a.end);
   const kept = [];
@@ -66,43 +84,85 @@ export function countStructure(text) {
   return {
     headings: (source.match(/^[ \t]{0,3}#{1,6}[ \t]+\S/gm) || []).length,
     bullets: (source.match(/^[ \t]*[-*+][ \t]+\S/gm) || []).length,
-    fences: (source.match(/^[ \t]*```/gm) || []).length,
+    fences: (source.match(/^[ \t]*(?:`{3,}|~{3,})/gm) || []).length,
     links: (source.match(/\[[^\]\n]+\]\([^)\n]+\)/g) || []).length,
   };
 }
 
-/** Xoá marker, giữ nội dung; code fence giữ nguyên code bên trong. */
+/**
+ * Bỏ đúng dòng marker của fence, giữ nguyên từng byte bên trong.
+ * `"```py\n a  \n\n\nb\n```"` → `" a  \n\n\nb"`.
+ */
+export function unfence(block) {
+  const raw = String(block ?? '');
+  const lines = raw.split('\n');
+  const fenceLine = line => /^[ \t]*(?:`{3,}|~{3,})[^\n]*$/.test(line);
+  if (lines.length && fenceLine(lines[0])) lines.shift();
+  if (lines.length && fenceLine(lines[lines.length - 1])) lines.pop();
+  return lines.join('\n');
+}
+
+/**
+ * Bỏ marker Markdown trong MỘT đoạn văn xuôi (không có code fence).
+ * Dùng khi người dùng tắt "giữ Markdown"; nội dung chữ giữ nguyên.
+ * @returns {{text:string, removed:number}}
+ */
+export function stripMarkdownInline(text) {
+  let removed = 0;
+  const hit = () => { removed += 1; return ''; };
+  let out = String(text ?? '');
+  out = out.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, hit);
+  out = out.replace(/^[ \t]{0,3}>[ \t]?/gm, hit);
+  out = out.replace(/^[ \t]*[-*+•][ \t]+/gm, hit);
+  out = out.replace(/^[ \t]*\d{1,3}[.)][ \t]+/gm, hit);
+  out = out.replace(/^[ \t]{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, hit);
+  out = out.replace(/!\[([^\]\n]*)\]\(([^)\n]*)\)/g, (m, alt, url) => {
+    removed += 1;
+    if (!alt) return url;
+    return alt === url ? alt : `${alt} (${url})`;
+  });
+  out = out.replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (m, label, url) => {
+    removed += 1;
+    if (/^https?:\/\//i.test(label)) return label;
+    return label === url ? label : `${label} (${url})`;
+  });
+  out = out.replace(/<((?:https?:\/\/|mailto:)[^>\s]+)>/g, (m, url) => { removed += 1; return url; });
+  out = out.replace(/\*\*\*([^*\n]+)\*\*\*/g, (m, x) => { removed += 1; return x; });
+  out = out.replace(/\*\*([^*\n]+)\*\*/g, (m, x) => { removed += 1; return x; });
+  out = out.replace(/__([^_\n]+)__/g, (m, x) => { removed += 1; return x; });
+  out = out.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, (m, pre, x) => { removed += 1; return pre + x; });
+  out = out.replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:!?]|$)/g, (m, pre, x) => { removed += 1; return pre + x; });
+  out = out.replace(/`([^`\n]+)`/g, (m, x) => { removed += 1; return x; });
+  return { text: out, removed };
+}
+
+/**
+ * Xoá marker toàn văn nhưng giữ NGUYÊN BYTE bên trong code fence / code span.
+ * Không dọn khoảng trắng ở đây: việc đó do cleaning.js làm theo từng đoạn văn
+ * xuôi, nhờ vậy tab và dòng trống trong code không bị cắt.
+ */
 export function stripMarkdown(text) {
   const source = String(text ?? '').replace(/\r\n?/g, '\n');
+  const slots = [];
+  const hold = raw => {
+    slots.push(raw);
+    return `\u0001${slots.length - 1}\u0001`;
+  };
   let removed = 0;
-  let out = source.replace(FENCE, block => {
-    removed += 1;
-    return block.replace(/^[ \t]*```[^\n]*\n?/gm, '').replace(/^[ \t]*```[ \t]*$/gm, '').replace(/\n{2,}/g, '\n');
+  let out = source.replace(FENCE, block => { removed += 1; return hold(block); });
+  out = out.replace(INLINE_CODE, span => { removed += 1; return hold(span); });
+
+  const inline = stripMarkdownInline(out);
+  removed += inline.removed;
+  // Chỉ cắt khoảng trắng NGOÀI placeholder: byte trong code vẫn nguyên.
+  out = inline.text.replace(/^\s+|\s+$/g, '');
+
+  out = out.replace(/\u0001(\d+)\u0001/g, (match, i) => {
+    const raw = slots[Number(i)];
+    if (raw === undefined) return match;
+    if (/^[ \t]*(?:`{3,}|~{3,})/.test(raw)) return unfence(raw);
+    return raw.slice(1, -1);
   });
-  out = out.replace(LINK, (match, offset, whole) => {
-    removed += 1;
-    const label = match.replace(/^!?\[/, '').replace(/\]\([^)]*\)$/, '');
-    const url = (match.match(/\]\(([^)]*)\)$/) || [])[1] || '';
-    if (label === url) return label;
-    void whole;
-    void offset;
-    return url ? `${label} (${url})` : label;
-  });
-  out = out
-    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, () => { removed += 1; return ''; })
-    .replace(/^[ \t]{0,3}>[ \t]?/gm, () => { removed += 1; return ''; })
-    .replace(/^[ \t]*[-*+][ \t]+/gm, () => { removed += 1; return ''; })
-    .replace(/^[ \t]*\d{1,3}[.)][ \t]+/gm, () => { removed += 1; return ''; })
-    .replace(/\*\*([^*\n]+)\*\*/g, (m, inner) => { removed += 1; return inner; })
-    .replace(/__([^_\n]+)__/g, (m, inner) => { removed += 1; return inner; })
-    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, (m, pre, inner) => { removed += 1; return pre + inner; })
-    .replace(/`([^`\n]+)`/g, (m, inner) => { removed += 1; return inner; })
-    .replace(/^[ \t]{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, () => { removed += 1; return ''; });
-  out = out
-    .split('\n')
-    .map(line => line.replace(/[ \t]+$/g, ''))
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/^\s+|\s+$/g, '');
+
   return { text: out, removed };
 }

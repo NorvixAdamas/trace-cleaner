@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "1.0",
+  "note": "Hợp đồng hành vi dùng chung cho JS core và Python CLI. Mỗi case phải cho cùng cleaned text ở cả hai phía; chỉ dùng văn xuôi thuần (chưa có Markdown) để Python parity kiểm tra được tầng ký tự.",
+  "cases": [
+    {
+      "name": "invisible + double space",
+      "text": "a\u200b  b\u00adc",
+      "cleaned": "a bc"
+    },
+    {
+      "name": "BOM và word joiner",
+      "text": "BOM\ufeff ở đầu và word\u2060joiner.",
+      "cleaned": "BOM ở đầu và wordjoiner."
+    },
+    {
+      "name": "bidi override",
+      "text": "bidi \u202ereversed\u202c xong.",
+      "cleaned": "bidi reversed xong."
+    },
+    {
+      "name": "homoglyph Cyrillic",
+      "text": "homoglyph \u0430\u0435\u043e\u0440\u0441\u0445 xong.",
+      "cleaned": "homoglyph aeopcx xong."
+    },
+    {
+      "name": "nhiều dòng trống",
+      "text": "dòng   một\n\n\n\ndòng   hai",
+      "cleaned": "dòng một\n\ndòng hai"
+    },
+    {
+      "name": "tag chars",
+      "text": "tag \udb40\udc41\udb40\udc42 xong.",
+      "cleaned": "tag xong."
+    },
+    {
+      "name": "tiếng Việt có dấu giữ nguyên",
+      "text": "Tôi   đã   kiểm tra: ắ ệ ỡ đ.",
+      "cleaned": "Tôi đã kiểm tra: ắ ệ ỡ đ."
+    },
+    {
+      "name": "emoji ZWJ giữ nguyên",
+      "text": "gia đình \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 ổn.",
+      "cleaned": "gia đình \ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67 ổn."
+    }
+  ]
+}

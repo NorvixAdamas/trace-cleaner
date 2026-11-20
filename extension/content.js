@@ -106,7 +106,7 @@
       humanize: (text, prompt, opts) => new Promise((resolve, reject) => {
         if (!chrome || !chrome.runtime || !chrome.runtime.id) return reject(new Error("ngữ cảnh extension không hợp lệ — tải lại trang"));
         getCfg().then(cfg => {
-          chrome.runtime.sendMessage({ type: "humanize", text, cfg: Object.assign({}, cfg, {
+          chrome.runtime.sendMessage({ type: "humanize", requestId: (opts && opts.requestId) || "", text, cfg: Object.assign({}, cfg, {
             prompt: prompt || "",
             markdown: !!(opts && opts.markdown),
             mode: (opts && opts.mode) || "general"
@@ -121,6 +121,12 @@
             resolve(res);
           });
         });
+      }),
+      cancel: id => new Promise(resolve => {
+        if (!id || !chrome || !chrome.runtime || !chrome.runtime.id) return resolve(false);
+        try {
+          chrome.runtime.sendMessage({ type: "cancel", requestId: id }, res => resolve(!!(res && res.ok)));
+        } catch { resolve(false); }
       }),
       grab: grabFromPage,
       getPrompt,

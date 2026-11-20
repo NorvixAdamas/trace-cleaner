@@ -39,7 +39,10 @@ if (manifest.background && manifest.background.type === 'module') {
   if (!entry || !existsSync(join(EXT, entry))) errors.push(`thiếu service worker: ${entry}`);
   else {
     const code = readFileSync(join(EXT, entry), 'utf8');
-    const imports = [...code.matchAll(/from\s+['"](\.\/[^'"]+)['"]/g)].map(m => m[1]);
+    const imports = [
+      ...code.matchAll(/from\s+['"](\.\/[^'"]+)['"]/g),
+      ...code.matchAll(/^\s*import\s+['"](\.\/[^'"]+)['"]/gm),
+    ].map(m => m[1]);
     for (const relative of imports) {
       if (!existsSync(join(EXT, relative))) errors.push(`import không tồn tại: ${relative}`);
     }
@@ -57,8 +60,12 @@ for (const script of manifest.content_scripts || []) {
   if (sidebarAt >= 0 && (coreAt < 0 || coreAt > sidebarAt)) {
     errors.push('content script phải nạp core/bundle.js trước sidebar.js');
   }
-  if ((script.matches || []).some(m => m === '<all_urls>')) {
-    warnings.push('content script chạy trên mọi trang — cần ghi rõ lý do trong docs/SECURITY.md');
+  const matches = script.matches || [];
+  if (matches.some(m => m === '<all_urls>' || m === 'http://*/*' || m === 'https://*/*')) {
+    warnings.push('content script chạy trên mọi trang http(s) — cần ghi rõ lý do trong docs/SECURITY.md');
+  }
+  if (matches.some(m => m === 'file:///*' || m === 'ftp://*/*')) {
+    errors.push('content script không được chạy trên scheme ngoài http(s)');
   }
 }
 

@@ -36,9 +36,13 @@ test('applyEdits áp đúng vị trí và từ chối edit không tồn tại', 
   assert.equal(result.rejected[0].reason, 'not_found');
 });
 
-test('applyEdits không áp lại nhầm chỗ khi có index', () => {
-  const result = applyEdits('a a a', [{ find: 'a', replace: 'b', index: 3 }]);
+test('applyEdits chỉ áp đúng vị trí index, không trượt sang chỗ khác', () => {
+  const result = applyEdits('a a a', [{ find: 'a', replace: 'b', index: 4 }]);
   assert.equal(result.text, 'a a b');
+  // index lệch một ký tự phải là conflict, không được tự tìm chỗ khác
+  const wrong = applyEdits('a a a', [{ find: 'a', replace: 'b', index: 3 }]);
+  assert.equal(wrong.text, 'a a a');
+  assert.equal(wrong.conflicts[0].reason, 'text_mismatch');
 });
 
 test('diff giữ nguyên khoảng trắng và xuống dòng', () => {

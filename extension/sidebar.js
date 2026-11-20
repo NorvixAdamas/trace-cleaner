@@ -115,6 +115,7 @@ window.TraceSidebar = (() => {
         <select id="cMode" title="Kiểu viết lại — cùng bộ chế độ với web"></select>
         <button id="btnSwap" class="ghost" title="Đổi thứ tự chạy">⇄ <span id="order">Humanize → Làm sạch</span></button>
         <button id="btnRun" class="primary">Chạy</button>
+        <button id="btnCancel" class="ghost" disabled title="Dừng request đang chạy (không phải timeout)">■ Huỷ</button>
       </div>
       <div class="status" id="status"></div>
       <textarea id="output" readonly placeholder="Kết quả…"></textarea>
@@ -131,7 +132,7 @@ window.TraceSidebar = (() => {
         <select id="cProvider"><option value="google">Google Gemini</option><option value="openai">OpenAI-compatible</option></select>
         <input id="cBase" placeholder="base url">
         <input id="cModel" placeholder="gemini-3.8-flash">
-        <input id="cKey" type="password" placeholder="API key (lưu trong chrome.storage.local)">
+        <input id="cKey" type="password" autocomplete="off" spellcheck="false" placeholder="API key (lưu trong chrome.storage.local)">
         <button id="btnSaveCfg" style="margin-top:6px">Lưu cấu hình</button>
       </details>
       <div class="foot">Làm sạch chạy 100% tại máy. Humanize gửi văn bản lên Google/OpenAI qua background — chỗ này rời máy.
@@ -154,6 +155,9 @@ window.TraceSidebar = (() => {
     let busy = false;
     let mdKeep = localStorage.getItem("traceMdKeep") !== "0";
     let lastRunOriginal = "";
+    let currentRequestId = null;
+    let currentGuard = null;
+    const newRequestId = () => "ui_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
     // Kiểu viết lại: cùng danh sách với web (packages/writing/prompts.js).
     const MODE_LABELS = [
       ["general", "Tổng quát"], ["proofread", "Proofread"], ["clarity", "Clarity"],
@@ -320,7 +324,9 @@ window.TraceSidebar = (() => {
           if (step === "human") {
             say("Humanize: đang gọi model…");
             if (typeof hooks.humanize !== "function") throw new Error("extension chưa nối background");
-            const r = await hooks.humanize(cur, promptText, { markdown: mdKeep, mode });
+            currentRequestId = newRequestId();
+            $("btnCancel").disabled = typeof hooks.cancel !== "function";
+            const r = await hooks.humanize(cur, promptText, { markdown: mdKeep, mode, requestId: currentRequestId });
             if (r && typeof r === "object" && typeof r.text === "string"){ cur = r.text; guard = r.preservation || null; }
             else cur = r;
           } else {
@@ -340,6 +346,8 @@ window.TraceSidebar = (() => {
         say("Lỗi: " + (e && e.message ? e.message : e), "err");
       } finally {
         busy = false;
+        currentRequestId = null;
+        $("btnCancel").disabled = true;
         $("btnRun").disabled = false;
       }
     }
@@ -347,8 +355,9 @@ window.TraceSidebar = (() => {
     function paintGuard(guard){
       const box = $("guardBox"), list = $("guardList");
       if (!box || !list) return;
-      if (!guard){ box.hidden = true; list.textContent = ""; return; }
+      if (!guard){ box.hidden = true; list.textContent = ""; currentGuard = null; return; }
       const issues = guard.issues || [];
+      currentGuard = guard;
       box.hidden = false;
       list.textContent = issues.length
         ? issues.map(i => (i.severity === "failed" ? "LỖI: " : "Cảnh báo: ") + i.detail).join("\n")
@@ -374,17 +383,28 @@ window.TraceSidebar = (() => {
       lastRunOriginal = input.value;
       try {
         say("Humanize: đang gọi model…");
-        const r = await hooks.humanize(t, promptText, { markdown: mdKeep, mode });
+        currentRequestId = newRequestId();
+        $("btnCancel").disabled = typeof hooks.cancel !== "function";
+        const r = await hooks.humanize(t, promptText, { markdown: mdKeep, mode, requestId: currentRequestId });
         const outText = r && typeof r === "object" ? r.text : r;
         output.value = outText;
         paintMetrics(clean(outText, { markdown: mdKeep }));
         paintGuard(r && typeof r === "object" ? r.preservation : null);
         say("Chỉ humanize — chưa làm sạch ký tự.", "ok");
       } catch (e) { say("Lỗi: " + (e && e.message ? e.message : e), "err"); }
-      finally { busy = false; $("btnRun").disabled = false; }
+      finally { busy = false; currentRequestId = null; $("btnCancel").disabled = true; $("btnRun").disabled = false; }
     }
 
     $("btnRun").addEventListener("click", run);
+
+    /* Huỷ thật: gửi requestId xuống background để abort fetch đang chạy. */
+    $("btnCancel").addEventListener("click", async () => {
+      const id = currentRequestId;
+      if (!id || typeof hooks.cancel !== "function") return;
+      $("btnCancel").disabled = true;
+      const ok = await hooks.cancel(id);
+      say(ok ? "Đã huỷ yêu cầu." : "Yêu cầu đã xong trước khi huỷ.", ok ? "ok" : "err");
+    });
     $("btnSwap").addEventListener("click", () => {
       order = order === "human-first" ? "clean-first" : "human-first";
       localStorage.setItem("traceChainOrder", order);
@@ -404,6 +424,15 @@ window.TraceSidebar = (() => {
     });
     $("btnInsert").addEventListener("click", async () => {
       if (!output.value) return say("Chưa có kết quả.", "err");
+      /* Bảo toàn nội dung không đạt (mất số/mục danh sách/phủ định/URL) ⇒ phải
+         xác nhận rõ ràng, không im lặng dán đè lên ô của người dùng. */
+      const failedIssues = currentGuard ? (currentGuard.issues || []).filter(i => i.severity === "failed") : [];
+      if (failedIssues.length) {
+        const failed = failedIssues;
+        const detail = failed.slice(0, 4).map(i => "• " + i.detail).join("\n");
+        const proceed = window.confirm("Kiểm tra bảo toàn KHÔNG đạt:\n" + detail + "\n\nVẫn dán vào trang?");
+        if (!proceed) return say("Đã giữ nguyên trang — sửa lại kết quả rồi thử lại.", "err");
+      }
       const ok = hooks.insert ? await hooks.insert(output.value) : false;
       say(ok ? "Đã dán vào ô đang chọn trên trang." : "Không tìm thấy ô nhập — đã copy vào clipboard.", ok ? "ok" : "");
     });

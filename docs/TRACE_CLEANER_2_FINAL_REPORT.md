@@ -1,4 +1,9 @@
-# Trace Cleaner 2.1 — Báo cáo triển khai
+# Trace Cleaner 2.1 — Báo cáo triển khai (đã lỗi thời)
+
+> **Trạng thái:** tài liệu lịch sử cho milestone 2.1. Ba commit 2.1 đã ở trên `origin/main`
+> (`4730665`, `499c762`, `056cd6b`); HEAD hiện tại là `056cd6b`, không phải `5fb0721`. Các số liệu
+> "chưa push", 73 test, `<all_urls>`, `PROMPT_VERSION 2.1.0` dưới đây **không còn đúng**.
+> Xem [TRACE_CLEANER_2_2_FINAL_REPORT.md](TRACE_CLEANER_2_2_FINAL_REPORT.md).
 
 Ngày: 2026-11-20. Baseline: `5fb0721`. Báo cáo chỉ ghi việc **đã làm và đã kiểm tra**;
 phần chưa làm nằm ở mục H. Không commit, không push (theo yêu cầu).

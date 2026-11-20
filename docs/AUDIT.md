@@ -1,5 +1,11 @@
 # Trace Cleaner — Engineering Audit
 
+> **Cập nhật 2.2 (2026-11-20):** audit dưới đây viết ở baseline `b11d616`/`5fb0721`. Trạng thái hiện
+> tại: web dùng canonical core (không còn `cleanText`/`preservationCheck`/`buildPrompt` riêng), có
+> workspace rà soát với `DocumentSession`, provider thống nhất + huỷ được, parser có giới hạn
+> (`packages/core/limits.js`), có grammar deterministic en/vi, 193 test pass. Việc còn lại và bằng
+> chứng nằm ở [TRACE_CLEANER_2_2_FINAL_REPORT.md](TRACE_CLEANER_2_2_FINAL_REPORT.md) mục J.
+
 - **Ngày audit:** 2026-11-20
 - **HEAD lúc bắt đầu:** `b11d616` (`Nhẹ hơn, ô text phóng to được và tuỳ chọn Markdown giữ/xoá định dạng`)
 - **Nhánh:** `main`
@@ -155,7 +161,8 @@ Mức độ: **P0** mất dữ liệu/đảo nghĩa, **P1** sai chức năng rõ
 
 ### F-12 — P2 — Content script chạy trên mọi trang
 
-- **File:** `extension/manifest.json` → `content_scripts.matches: ["<all_urls>"]`.
+- **File:** `extension/manifest.json` → `content_scripts.matches` (2.2: đã thu về `http://*/*`, `https://*/*`;
+  vẫn rộng, kế hoạch chuyển sang `activeTab` + `scripting` ở 2.3).
 - **Lý do tồn tại:** sidebar nổi + phím tắt + đồng bộ prompt cần có mặt trên trang bất kỳ.
 - **Rủi ro:** mã được nạp vào mọi tab; tăng bề mặt tấn công và bộ nhớ.
 - **Hiện trạng:** DOM chỉ dựng khi người dùng mở; đã bỏ auto-build. **Chưa thu hẹp** vì sẽ mất
@@ -259,6 +266,7 @@ Báo cáo cuối: `docs/TRACE_CLEANER_2_FINAL_REPORT.md`.
 # Phụ lục 2.1 — lỗi phát hiện sau audit 2.0
 
 Các mục dưới đây được xác nhận bằng cách đọc trực tiếp mã tại `5fb0721` và tái hiện trong Node.
+Trạng thái mới nhất của từng mục (2.2) nằm ở mục đầu file.
 
 ## F-22 — P0 — Extension xoá mục thứ ba của danh sách
 
@@ -313,4 +321,4 @@ Các mục dưới đây được xác nhận bằng cách đọc trực tiếp 
 ## F-29 — P2 — `test:core` trỏ file không tồn tại
 
 - **File:** `package.json` (`tests/document.test.js`).
-- **Sửa:** bỏ file không tồn tại, thêm `tests/cleaning.test.js`; `npm test` chạy 73 test.
+- **Sửa:** bỏ file không tồn tại, thêm `tests/cleaning.test.js`; 2.2: `npm test` chạy 193 test.

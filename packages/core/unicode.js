@@ -186,19 +186,27 @@ export function nameOf(ch, cp = ch.codePointAt(0)) {
 
 /**
  * Quét toàn văn, gộp theo codepoint.
+ *
+ * QUAN TRỌNG: quét trên CHÍNH chuỗi nguồn, không normalize trước. Nếu normalize
+ * trước rồi mới đếm vị trí thì `positions` không còn trỏ vào chuỗi gốc (một
+ * chuỗi decomposed như "a" + U+0301 co lại thành 1 codepoint và mọi offset sau
+ * đó lệch). Ở đây offset luôn là UTF-16 index trong `text` gốc.
+ *
+ * @param {string} text
  * @returns {Array<{cp:number,hex:string,name:string,category:string,severity:string,action:string,count:number,positions:number[],flag:boolean}>}
  */
 export function scan(text) {
+  const source = String(text ?? '');
   const rows = new Map();
   let index = 0;
   let inFlag = false;
-  for (const ch of text.normalize('NFC')) {
+  for (const ch of source) {
     const cp = ch.codePointAt(0);
     const category = classify(ch, cp);
     const start = index;
     index += ch.length;
     if (category === 'tag') {
-      const flag = (inFlag && isFlagTag(cp)) || isFlagSequence(text, start);
+      const flag = (inFlag && isFlagTag(cp)) || isFlagSequence(source, start);
       inFlag = flag;
       if (flag) {
         const existing = rows.get(cp);
@@ -241,17 +249,38 @@ export function scan(text) {
       rows.set(cp, row);
     }
     row.count += 1;
-    if (category === 'tag' && isFlagSequence(text, start)) row.flag = true;
+    if (category === 'tag' && isFlagSequence(source, start)) row.flag = true;
     if (row.positions.length < 20) row.positions.push(start);
   }
   return [...rows.values()].sort((a, b) => b.count - a.count || a.cp - b.cp);
 }
 
 /**
+ * Hệ offset chuẩn của cả core: UTF-16 code-unit index trong CHUỖI GỐC.
+ * Không phải codepoint index, không phải offset trong chuỗi đã normalize.
+ * `audit[].index` luôn trỏ vào chuỗi người dùng đưa vào.
+ */
+export const OFFSET_SYSTEM = 'utf16-source';
+
+const COMBINING = /^\p{M}/u;
+
+/**
  * Làm sạch văn bản, có audit từng ký tự.
+ *
+ * Không normalize toàn chuỗi trước khi đếm vị trí. Mỗi "run" (đoạn ký tự được
+ * giữ liền nhau) được normalize NFC riêng, và run bắt đầu bằng combining mark
+ * được gộp vào run trước để dấu vẫn ghép đúng. Nhờ vậy:
+ *   - audit[].index luôn là offset trong chuỗi gốc;
+ *   - văn bản decomposed (tiếng Việt, Ả Rập, Indic) vẫn ra NFC;
+ *   - `segments` cho phép map ngược output → nguồn.
+ *
+ * Hàm này chỉ đổi ký tự, KHÔNG dọn khoảng trắng/dòng trống. Việc dọn văn xuôi do
+ * `cleaning.js` làm theo từng đoạn, để code fence không bị chạm vào.
+ *
  * @param {string} text
  * @param {object} [options]
- * @returns {{text:string, log:Record<string,number>, audit:Array<object>, warnings:string[]}}
+ * @returns {{text:string, log:Record<string,number>, audit:Array<object>, warnings:string[],
+ *   segments:Array<{outStart:number,outEnd:number,srcStart:number,srcEnd:number}>, offsetSystem:string}}
  */
 export function clean(text, options = {}) {
   const o = {
@@ -264,14 +293,37 @@ export function clean(text, options = {}) {
     removeVariationSelectors: false,
     ...options,
   };
-  const source = o.normalize ? text.normalize(o.normalize) : text;
+  const source = String(text ?? '');
   const audit = [];
   const warnings = [];
   const log = {};
-  let out = '';
+  const runs = [];
+  let run = '';
+  let runStart = -1;
+  let runEnd = -1;
   let index = 0;
-  let lastKept = '';
   let inFlag = false;
+
+  const flush = () => {
+    if (!run) return;
+    const normalized = o.normalize ? run.normalize(o.normalize) : run;
+    const previous = runs[runs.length - 1];
+    if (previous && COMBINING.test(normalized)) {
+      // Dấu tách khỏi ký tự gốc bởi ký tự đã bị xoá: ghép lại để vẫn ra NFC.
+      previous.text = o.normalize ? (previous.text + normalized).normalize(o.normalize) : previous.text + normalized;
+      previous.srcEnd = runEnd;
+    } else {
+      runs.push({ text: normalized, srcStart: runStart, srcEnd: runEnd });
+    }
+    run = '';
+    runStart = -1;
+    runEnd = -1;
+  };
+  const push = (chunk, at) => {
+    if (runStart < 0) runStart = at;
+    run += chunk;
+    runEnd = at + 1;
+  };
 
   const record = (category, action, replacement, reason, cp, ch, at) => {
     audit.push({
@@ -299,45 +351,47 @@ export function clean(text, options = {}) {
       if (flag) {
         bump('flagKept');
         record(category, 'kept', ch, 'part of emoji flag sequence', cp, ch, at);
-        out += ch;
-        lastKept = ch;
+        push(ch, at);
         continue;
       }
       bump('security');
       record(category, 'removed', '', 'tag characters can hide instructions', cp, ch, at);
+      flush();
       continue;
     }
     if (category === 'pua') {
       bump('security');
       record(category, 'removed', '', 'private use area', cp, ch, at);
+      flush();
       continue;
     }
     if (category === 'invisible') {
       bump(cp === 0x00ad ? 'softHyphen' : 'invisible');
       record(category, 'removed', '', 'invisible character', cp, ch, at);
+      flush();
       continue;
     }
     if (category === 'bidi') {
       bump('bidi');
       record(category, 'removed', '', 'bidi control reorders displayed text', cp, ch, at);
+      flush();
       continue;
     }
     if (category === 'blank') {
       bump('blank');
       const replacement = o.blankToSpace ? ' ' : ch;
       record(category, o.blankToSpace ? 'replaced' : 'kept', replacement, 'unusual space', cp, ch, at);
-      out += replacement;
-      lastKept = replacement;
+      push(replacement, at);
       continue;
     }
     if (category === 'joiner') {
       if (o.removeJoiners) {
         bump('joinerRemoved');
         record(category, 'removed', '', 'explicitly requested', cp, ch, at);
+        flush();
       } else {
         bump('joinerKept');
-        out += ch;
-        lastKept = ch;
+        push(ch, at);
       }
       continue;
     }
@@ -345,26 +399,24 @@ export function clean(text, options = {}) {
       if (o.removeVariationSelectors) {
         bump('vsRemoved');
         record(category, 'removed', '', 'explicitly requested', cp, ch, at);
+        flush();
       } else {
         bump('vsKept');
-        out += ch;
-        lastKept = ch;
+        push(ch, at);
       }
       continue;
     }
     if (category === 'linesep') {
       bump('lineSep');
       record(category, 'replaced', '\n', 'line/paragraph separator', cp, ch, at);
-      out += '\n';
-      lastKept = '\n';
+      push('\n', at);
       continue;
     }
     if (category === 'homoglyph') {
       bump('homoglyph');
       const replacement = o.foldHomoglyphs ? HOMOGLYPHS[ch] : ch;
       record(category, o.foldHomoglyphs ? 'replaced' : 'kept', replacement, 'lookalike character', cp, ch, at);
-      out += replacement;
-      lastKept = replacement;
+      push(replacement, at);
       continue;
     }
     if (category === 'punct') {
@@ -372,20 +424,17 @@ export function clean(text, options = {}) {
         bump('emDash');
         const replacement = { comma: ', ', hyphen: ' - ', space: ' ', keep: ch }[o.emDash] ?? ', ';
         record(category, o.emDash === 'keep' ? 'kept' : 'replaced', replacement, 'em dash', cp, ch, at);
-        out += replacement;
-        lastKept = replacement;
+        push(replacement, at);
       } else if (cp === 0x2013) {
         bump('enDash');
         const replacement = o.emDash === 'keep' ? ch : '-';
         record(category, o.emDash === 'keep' ? 'kept' : 'replaced', replacement, 'en dash', cp, ch, at);
-        out += replacement;
-        lastKept = replacement;
+        push(replacement, at);
       } else if (cp === 0x2026) {
         bump('ellipsis');
         const replacement = o.straightQuotes ? '...' : ch;
         record(category, 'replaced', replacement, 'ellipsis', cp, ch, at);
-        out += replacement;
-        lastKept = replacement;
+        push(replacement, at);
       } else {
         bump('quotes');
         let replacement = ch;
@@ -394,30 +443,38 @@ export function clean(text, options = {}) {
           else replacement = '"';
         }
         record(category, replacement === ch ? 'kept' : 'replaced', replacement, 'typographic quote', cp, ch, at);
-        out += replacement;
-        lastKept = replacement;
+        push(replacement, at);
       }
       continue;
     }
 
     inFlag = false;
-    out += ch;
-    lastKept = ch;
+    push(ch, at);
+  }
+  flush();
+
+  let out = '';
+  const segments = [];
+  for (const item of runs) {
+    segments.push({ outStart: out.length, outEnd: out.length + item.text.length, srcStart: item.srcStart, srcEnd: item.srcEnd });
+    out += item.text;
   }
 
+  // Dọn văn xuôi ở tầng ký tự. CHỈ dùng cho đoạn chữ: `cleaning.js` gọi hàm này
+  // theo từng đoạn và không bao giờ đưa code fence / URL vào đây. Muốn làm sạch
+  // văn bản có code thì gọi `cleanText()`, không gọi `clean()` trực tiếp.
   out = out
-    .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+([,.;:!?])/g, '$1')
-    .replace(/([,;:])(?![ \t\n*_`)\]}\/])/g, '$1 ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/([,;:])(?=[A-Za-zÀ-ỹ])/g, '$1 ')
     .replace(/[ \t]+$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
-    .replace(/^\n+|\n+$/g, '');
+    .replace(/^\s+|\s+$/g, '');
 
   if (log.flagKept) warnings.push('Giữ tag char của emoji cờ (🏴) — xoá sẽ phá emoji.');
   if (log.joinerKept) warnings.push('Giữ ZWJ/ZWNJ — cần cho Ả Rập/Indic/emoji.');
-  void lastKept;
 
-  return { text: out, log, audit, warnings };
+  return { text: out, log, audit, warnings, segments, offsetSystem: OFFSET_SYSTEM };
 }
 
 /** Đếm nhanh để hiển thị (không dùng cho kết luận tác giả). */

@@ -1,92 +1,81 @@
 # Security
 
-Tài liệu này mô tả **hiện trạng** và rủi ro còn lại. Không có tuyên bố "an toàn tuyệt đối".
+## Nguyên tắc
 
-## 1. Mô hình mối đe doạ
+Mọi file tải lên và mọi văn bản dán vào đều là **dữ liệu không tin cậy**. Không có backend, không
+telemetry. Văn bản chỉ rời máy khi người dùng chủ động gọi provider.
 
-| Tài sản | Rủi ro chính |
+## Giới hạn tài nguyên parser (`packages/core/limits.js`)
+
+| Giới hạn | Giá trị |
 |---|---|
-| Văn bản người dùng dán | lộ qua API bên thứ ba nếu bật Humanize |
-| API key | đọc từ localStorage/chrome.storage, lộ qua log/commit |
-| File tải lên (docx/pdf/ảnh) | parser bị lừa bởi file độc hại, ZIP bomb, XML external entity |
-| Model output | prompt injection, chèn HTML, bịa dữ kiện |
-| Extension | quyền quá rộng, đọc trang không được phép |
+| Kích thước file | 60 MB |
+| Số entry ZIP | 512 |
+| Kích thước một entry sau giải nén | 32 MB |
+| Tổng dung lượng giải nén | 96 MB |
+| Tỉ lệ nở một entry | 120× |
+| Kích thước XML | 16 MB |
+| Độ sâu XML | 64 |
+| Trang PDF / slide PPTX / sheet XLSX | 60 / 60 / 40 |
+| Văn bản trích ra | 2 MB |
 
-## 2. Bề mặt tấn công
+Giới hạn là hằng `Object.freeze`, UI không được vượt.
 
-### 2.1 Web app (`index.html`)
+## ZIP
 
-- Không backend. Làm sạch văn bản/Unicode chạy tại máy.
-- **Rời máy khi:** gọi `/models` hoặc `generateContent` (Gemini), `/chat/completions`
-  (OpenAI-compatible/OpenRouter) bằng key người dùng nhập.
-- API key nằm trong `localStorage["traceApiCfg"]` khi bật "lưu cấu hình"; nếu không bật, key chỉ
-  nằm trong DOM tới khi tải lại. **Không phải két mã hoá**: mọi script cùng origin đọc được.
-- Output model vào DOM bằng `textContent`; chuỗi nội suy trong `innerHTML` đi qua `esc()`.
-- Không có CSP riêng (GitHub Pages không cho đặt header).
-- Prompt trong trang được sinh từ `packages/writing/prompts.js` (khối `@generated:prompts`), nên
-  người dùng có thể sửa prompt nhưng **không** sửa được ràng buộc chế độ/Markdown do registry áp.
+- Đọc central directory, kiểm **trước khi inflate**: số entry, tên entry (`..`, đường dẫn tuyệt
+  đối, `\`, NUL, tên quá dài, trùng tên), kiểu nén (chỉ stored/deflate), kích thước khai báo,
+  tỉ lệ nở, tổng dung lượng.
+- Sau khi inflate kiểm lại kích thước thật (không tin metadata).
+- Kiểm biên local header trước khi cắt buffer.
+- **Còn hở**: `DecompressionStream` không cho ngắt giữa chừng theo số byte, nên một entry khai báo
+  nhỏ nhưng nở lớn vẫn được giải nén xong rồi mới bị từ chối. Trần 32 MB/entry giới hạn thiệt hại.
 
-### 2.2 Extension
+## XML (DOCX/PPTX/XLSX)
 
-- Permissions: `storage`, `activeTab`, `scripting`, `sidePanel`.
-- Host permissions: chỉ 3 domain API (Gemini, OpenAI, OpenRouter).
-- `content_scripts.matches: ["<all_urls>"]` **vẫn tồn tại** vì sidebar nổi + phím tắt `Alt+Shift+S`
-  + đồng bộ prompt cần chạy trên trang bất kỳ. Đây là **quyền rộng có chủ ý**, đã ghi nhận
-  (AUDIT F-12); **không** được mô tả là "đã thu hẹp hoàn toàn". Giảm thiểu: sidebar chỉ dựng DOM
-  khi người dùng mở; chỉ đọc vùng chọn/ô đang focus khi bấm "Lấy văn bản"; không quét toàn trang,
-  không tự gửi dữ liệu.
-- `background.js` là ES module, import `extension/core/preservation.js` và `core/prompts.js`
-  (bản sinh tự động). Không có remote code, không `eval`.
-- **Timeout:** mọi request model bị huỷ sau 60s (`AbortController`). Lỗi được map sang mã ổn định
-  (`PROVIDER_AUTH_ERROR`, `PROVIDER_RATE_LIMIT`, `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`,
-  `PROVIDER_MODEL_UNAVAILABLE`, `PROVIDER_EMPTY_RESPONSE`, `NETWORK_ERROR`, `CANCELLED`).
-  Body lỗi bị cắt còn 180 ký tự; **không** log key, không đưa key vào message.
-- Model trả về luôn qua `checkPreservation` trước khi hiển thị; lỗi hiện rõ, không tự ẩn.
+`assertSafeXml()` chặn `<!DOCTYPE`, `<!ENTITY`, external `SYSTEM http(s)/file`, độ dài và độ sâu,
+chạy **trước** mọi regex trích xuất. Không resolve external entity, không tải tài nguyên ngoài,
+không thực thi macro/embedded object, không theo relationship ngoài.
 
-### 2.3 CLI (`tools/trace_scan.py`)
+## C2PA / provenance
 
-- Đọc file UTF-8, ghi khi có `-o`. Không gọi mạng.
-- Chưa có giới hạn kích thước file — file rất lớn sẽ tốn RAM.
+- Hiện chỉ **dò marker cấu trúc** (JUMBF/C2PA box, `c2pa` strings). Không parse manifest, không
+  xác minh chữ ký, không kiểm trust chain.
+- Vì vậy UI chỉ được nói "có/không thấy marker", **không** được nói "chữ ký hợp lệ" hay "file thật".
+- Không xoá metadata provenance khi làm sạch văn bản. Không suy ra tác giả từ việc thiếu metadata.
 
-## 3. Xử lý output không tin cậy
+## API key và Base URL
 
-1. Prompt không phải biện pháp bảo vệ. Mỗi phản hồi đều qua `checkPreservation`.
-2. Lỗi bảo toàn (`failed`) không bị ẩn: hiện danh sách vấn đề, giữ bản gốc, người dùng quyết định.
-3. `semanticReview` luôn `not_checked`. UI không được nói "đã kiểm tra nghĩa".
-4. Không thực thi HTML/JS từ model; không `eval` output.
+- Mặc định **chỉ trong phiên**; tick "ghi nhớ" mới lưu (`localStorage` web, `chrome.storage.local`
+  extension). Có nút xoá key.
+- Không log key, không đưa key vào message lỗi (`redactSecrets` + test).
+- Base URL phải `https`, chỉ cho `http` với loopback (`localhost`, `127.0.0.1`, `[::1]`).
+- Cảnh báo trong UI khi dùng Base URL tuỳ chỉnh: văn bản sẽ đi tới host đó.
 
-## 4. Prompt như một bề mặt tấn công
+## Extension permissions
 
-- Prompt cũ (≤ 2.0) dặn model **xoá** tricolon, bullet, "not just" — vừa làm mất dữ kiện vừa tạo
-  cảm giác "đã xử lý". Từ 2.1 chỉ còn một registry (`packages/writing/prompts.js`) đặt bảo toàn lên
-  đầu và cấm xoá mục danh sách/phủ định.
-- Prompt tự soạn của người dùng vẫn bị nối thêm khối chế độ + mệnh đề Markdown từ registry, nên
-  không thể vô tình bỏ ràng buộc cấu trúc.
-- Prompt không bao giờ được dùng để tuyên bố "vượt detector" hay "văn người thật".
+Hiện tại: `storage`, `activeTab`, `scripting`, `sidePanel`; host permissions chỉ 3 domain API.
+Content script chạy trên `http://*/*` và `https://*/*` (đã bỏ `file://`, `ftp://` và `<all_urls>`).
 
-## 5. File không tin cậy
+Lý do vẫn rộng: sidebar nổi cần content script có sẵn trên trang; nếu bỏ, người dùng phải bấm icon
+mỗi lần. `background.js` đã có đường chèn theo yêu cầu (`chrome.scripting.executeScript` trong
+`openFallback`), nên migration khả thi — nhưng **chưa** thực hiện vì chưa có Chrome E2E để chứng
+minh không mất tính năng (xem `docs/ROADMAP.md`).
 
-- Web đọc file cục bộ bằng `FileReader`/`arrayBuffer` và tự parse container.
-- **Chưa** xác nhận có giới hạn kích thước giải nén, số entry ZIP, độ sâu XML (AUDIT F-16).
-  Không nên mở file lạ từ nguồn không tin cậy.
-- Không chạy macro, không mở embedded object.
-- C2PA/chữ ký số: chỉ đọc dấu hiệu cấu trúc; **không** xác minh chữ ký, không kết luận "hợp lệ",
-  không xoá metadata provenance.
+Rủi ro còn lại: content script đọc được nội dung trang https bất kỳ khi người dùng mở sidebar; mã
+extension là mã cục bộ, không tải code từ xa.
 
-## 6. Bí mật
+## Rủi ro còn lại (chưa xử lý)
 
-- Không có credential trong repo. `.gitignore` chặn `*.log`, `*.pyc`, `shots/`, `tools/__tmp__/`.
-- Key lưu trong `chrome.storage.local` / `localStorage` (plaintext) khi người dùng chọn lưu.
-  Chưa có nút "Xoá key", chưa có chế độ "chỉ phiên".
-- Nếu key từng bị dán vào chat/log, phải tạo key mới.
+1. Không huỷ được giữa chừng một entry ZIP đang nở.
+2. PDF chỉ là heuristic: không parse xref/stream đầy đủ; có thể bỏ sót cấu trúc.
+3. DOCX tracked changes/comments chưa đọc hết.
+4. C2PA chưa xác minh mật mã.
+5. Không có CSP riêng cho extension; dựa vào CSP mặc định của MV3.
+6. Web app render nội dung bằng `textContent`/`createElement` (không `innerHTML` cho dữ liệu model),
+   nhưng guide tĩnh vẫn dùng `innerHTML` từ nguồn tin cậy trong repo.
 
-## 7. Việc cần làm
+## Báo cáo lỗi
 
-| Ưu tiên | Việc |
-|---|---|
-| P1 | Giới hạn kích thước file + giải nén + thời gian parse; harden XML (không DTD/entity ngoài) |
-| P1 | Test tự động cho timeout + mã lỗi provider (mock `fetch`) |
-| P2 | Nút huỷ request ở extension; key "chỉ phiên" mặc định + nút xoá key |
-| P2 | CSP khi triển khai ngoài GitHub Pages |
-| P2 | Thu hẹp `<all_urls>` (activeTab + optional host) sau khi có Chrome smoke test |
-| P3 | Xác minh C2PA bằng tool chính thức thay vì đọc thủ công |
+Gửi qua issue của repository, kèm: bước tái hiện, loại file/văn bản (đã khử dữ liệu nhạy cảm),
+thông báo lỗi và mã lỗi (`PROVIDER_*`, `PARSER_ERROR`, …).

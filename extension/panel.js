@@ -77,7 +77,7 @@
   const humanize = (text, prompt, opts) => new Promise((resolve, reject) => {
     if (!hasRuntime) return reject(new Error("Chưa cài như extension — mở panel qua icon trên toolbar."));
     getCfg().then(cfg => {
-      chrome.runtime.sendMessage({ type: "humanize", text, cfg: Object.assign({}, cfg, {
+      chrome.runtime.sendMessage({ type: "humanize", requestId: (opts && opts.requestId) || "", text, cfg: Object.assign({}, cfg, {
         prompt: prompt || "",
         markdown: !!(opts && opts.markdown),
         mode: (opts && opts.mode) || "general"
@@ -96,6 +96,11 @@
 
   const ui = window.TraceSidebar.mount(document.body, {
     humanize,
+    cancel: id => new Promise(resolve => {
+      if (!id || !hasRuntime) return resolve(false);
+      try { chrome.runtime.sendMessage({ type: "cancel", requestId: id }, res => resolve(!!(res && res.ok))); }
+      catch { resolve(false); }
+    }),
     grab: grabFromPage,
     insert: insertIntoPage,
     close: () => { try { window.close(); } catch {} },

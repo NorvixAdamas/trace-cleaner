@@ -326,7 +326,9 @@ def strip_text(
 
 def read_input(path: str | None) -> str:
     if path and path != "-":
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        # newline="" : không để Python đổi CRLF thành LF, nếu không offset và
+        # bản sạch sẽ khác bản JS trên Windows.
+        with open(path, encoding="utf-8", errors="replace", newline="") as fh:
             return fh.read()
     data = sys.stdin.buffer.read()
     return data.decode("utf-8", errors="replace")
@@ -393,7 +395,8 @@ def main() -> int:
     cleaned = None
     log: dict = {}
     audit: list[dict] = []
-    if args.strip or args.out or (args.json and args.audit):
+    # --json cũng cần bản sạch để test hợp đồng JS ↔ Python so sánh được.
+    if args.strip or args.out or args.json:
         cleaned, log, audit = strip_text(
             text,
             aggressive=args.aggressive,
@@ -408,6 +411,8 @@ def main() -> int:
             "security_chars": sum(r["count"] for r in rows
                                   if r["category"] in ACTIONABLE),
         }
+        if cleaned is not None:
+            payload["cleaned"] = cleaned
         if args.audit:
             payload["cleaning"] = {
                 "changes": log,
@@ -425,7 +430,7 @@ def main() -> int:
                 print("  ↳ tầng ký tự sạch, nhưng câu vẫn đều — phải viết lại mới hết.")
 
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as fh:
+        with open(args.out, "w", encoding="utf-8", newline="") as fh:
             fh.write(cleaned or "")
         if not args.json:
             print(f"\n  → {args.out}")

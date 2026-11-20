@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Trace Cleaner — sidebar",
-  "version": "2.1.0",
-  "description": "Sidebar quét & làm sạch dấu vết AI trong văn bản, có humanize tuỳ chọn.",
+  "version": "2.2.0",
+  "description": "Sidebar quét & làm sạch ký tự ẩn, kiểm tra bảo toàn nội dung, viết lại có duyệt.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
   "host_permissions": [
@@ -24,7 +24,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["http://*/*", "https://*/*"],
       "js": ["core/bundle.js", "sidebar.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": false

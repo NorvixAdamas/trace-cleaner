@@ -37,9 +37,9 @@ test('extension/core/prompts.js là bản copy của registry', () => {
   assert.match(copy.split('\n')[0], /AUTO-GENERATED/);
 });
 
-test('manifest nạp core trước sidebar và version 2.1', () => {
+test('manifest nạp core trước sidebar và version 2.2', () => {
   const manifest = JSON.parse(read('extension/manifest.json'));
-  assert.equal(manifest.version, '2.1.0');
+  assert.equal(manifest.version, '2.2.0');
   assert.deepEqual(manifest.content_scripts[0].js.slice(0, 2), ['core/bundle.js', 'sidebar.js']);
   const panel = read('extension/panel.html');
   assert.ok(panel.indexOf('src="core/bundle.js"') < panel.indexOf('src="sidebar.js"'), 'panel nạp sidebar trước core');

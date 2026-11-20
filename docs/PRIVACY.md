@@ -1,53 +1,49 @@
 # Privacy
 
-## Nguyên tắc
+## Điều gì ở lại máy
 
-Mặc định **không rời máy**. Chỉ một thao tác gửi dữ liệu ra ngoài: Humanize/viết lại bằng model,
-và chỉ khi người dùng đã nhập API key rồi bấm chạy.
+Toàn bộ: quét Unicode, làm sạch, bảo toàn, diff, rà soát tài liệu, gợi ý ngữ pháp, đọc metadata
+file, ELA, CLI Python. Không có backend, không telemetry, không analytics, không crash reporting.
 
-## Bảng dữ liệu → nơi xử lý
+## Khi nào dữ liệu rời máy
 
-| Chức năng | Xử lý tại | Rời máy? |
-|---|---|---|
-| Quét Unicode, làm sạch, strip Markdown | trình duyệt/CLI | không |
-| Chẩn đoán 21 tiêu chí, CV câu, tell | trình duyệt | không |
-| Diff, kiểm tra bảo toàn | trình duyệt/extension | không |
-| Đọc metadata .docx/.pptx/.xlsx/.pdf/ảnh | trình duyệt | không |
-| ELA ảnh | trình duyệt | không |
-| Guide, prompt soạn sẵn | trình duyệt | không |
-| Humanize / viết lại | Google Gemini hoặc API OpenAI-compatible do người dùng chọn | **có** |
-| Tải danh sách model | cùng provider ở trên | **có** (chỉ danh sách model) |
+Chỉ khi bạn bấm **Humanize / Viết lại** và đã nhập API key. Văn bản (không phải file) được gửi tới:
 
-## Dữ liệu được gửi khi Humanize
+| Provider | Đích mặc định |
+|---|---|
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta` |
+| OpenAI-compatible | `https://api.openai.com/v1` hoặc Base URL bạn nhập |
 
-- Toàn bộ văn bản trong ô nhập (tối đa 20.000 ký tự ở web; extension chưa chặn — xem ROADMAP).
-- Prompt (mặc định hoặc do người dùng sửa).
-- Không gửi tên file, metadata file, hay lịch sử chat.
+Base URL tuỳ chỉnh nghĩa là văn bản đi tới host đó — UI phải nói rõ. Chỉ chấp nhận `https`; `http`
+chỉ với loopback (Ollama, LM Studio…).
 
-## Lưu trữ tại máy
+## API key
 
-| Khoá | Nội dung | Ghi chú |
-|---|---|---|
-| `localStorage["traceApiCfg"]` | provider/base/model/key | chỉ khi bật "lưu cấu hình" |
-| `localStorage["tracePrompt"]` | prompt tuỳ chỉnh | đồng bộ sang extension |
-| `localStorage["traceMdKeep"]` | trạng thái nút Markdown | `"0"` = tắt |
-| `localStorage["traceChainOrder"]` | thứ tự chuỗi | |
-| `localStorage["traceBoxSize"]` | kích thước ô phóng to | |
-| `chrome.storage.local["traceCfg"]` | cấu hình + key của extension | không sync |
-| `chrome.storage.local["tracePrompt"]` | prompt dùng chung | |
+- **Mặc định chỉ trong phiên**: web giữ trong biến của tab (mất khi đóng tab); extension không ghi
+  vào storage trừ khi bạn tick "ghi nhớ".
+- Tick "ghi nhớ" → lưu `localStorage` (web) hoặc `chrome.storage.local` (extension), dạng plaintext.
+  Đây **không phải** mã hoá; bất kỳ tiện ích nào đọc được storage của extension/trang đó đều đọc được.
+- Có nút **Xoá key**. Key không vào log, không vào message lỗi, không vào báo cáo, không vào file
+  trong repo.
 
-Không có analytics, không có telemetry, không có cookie theo dõi.
+## File
 
-## Quyền của người dùng (hiện có / còn thiếu)
+File bạn chọn được đọc bằng `FileReader`/`arrayBuffer` trong tab. Không upload. ELA được render
+thành data URL trong bộ nhớ; giữ tối đa 8 kết quả để không phình RAM.
 
-- Xoá key web: bỏ tick "lưu cấu hình" (xoá khỏi localStorage) và xoá ô key.
-- Xoá key extension: mở "API key & model" và xoá nội dung, bấm Lưu (chưa có nút riêng).
-- Xoá lịch sử: hiện **chưa có** lịch sử tài liệu được lưu; đóng tab là mất.
-- Xuất dữ liệu: copy/tải `.txt` từ tab Đã làm sạch.
-- Tắt hoàn toàn AI: không nhập key, chỉ dùng Quét/Làm sạch.
+## Lịch sử tài liệu
 
-## Điều không được hứa
+`DocumentSession` chỉ sống trong tab hiện tại. Không lưu lên server, không lưu vào storage trừ khi
+bạn tự export. Đóng tab là mất.
 
-- Không hứa "xoá dấu vết AI" hay "qua detector". Sản phẩm sửa lỗi viết và làm sạch ký tự.
-- Không hứa dữ liệu gửi provider là riêng tư: chính sách của Google/OpenAI/OpenRouter áp dụng.
-- Không hứa localStorage là nơi lưu bí mật an toàn.
+## Prompt tự soạn / tuỳ chọn viết
+
+Prompt người dùng tự sửa được lưu cục bộ (`localStorage` web, `chrome.storage.local` extension, đồng
+bộ hai chiều giữa hai bề mặt) để dùng lại. Không có profile nào được gửi lên server.
+
+## Điều app không làm
+
+- Không xoá C2PA hay metadata provenance khi làm sạch văn bản.
+- Không kết luận ai viết văn bản từ Unicode, metadata hay thời gian soạn.
+- Không hứa "qua detector". Điểm số là heuristic đếm đặc trưng.
+- Không gửi văn bản tới dịch vụ bên thứ ba nào ngoài provider bạn chọn.
