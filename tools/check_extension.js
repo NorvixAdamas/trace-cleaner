@@ -47,12 +47,34 @@ if (manifest.background && manifest.background.type === 'module') {
 }
 
 for (const script of manifest.content_scripts || []) {
-  for (const file of script.js || []) {
+  const files = script.js || [];
+  for (const file of files) {
     if (!existsSync(join(EXT, file))) errors.push(`content script không tồn tại: ${file}`);
+  }
+  // Sidebar chỉ là UI adapter: core dùng chung phải được nạp trước nó.
+  const coreAt = files.indexOf('core/bundle.js');
+  const sidebarAt = files.indexOf('sidebar.js');
+  if (sidebarAt >= 0 && (coreAt < 0 || coreAt > sidebarAt)) {
+    errors.push('content script phải nạp core/bundle.js trước sidebar.js');
   }
   if ((script.matches || []).some(m => m === '<all_urls>')) {
     warnings.push('content script chạy trên mọi trang — cần ghi rõ lý do trong docs/SECURITY.md');
   }
+}
+
+try {
+  const panel = readFileSync(join(EXT, 'panel.html'), 'utf8');
+  const coreScript = panel.indexOf('src="core/bundle.js"');
+  const sidebarScript = panel.indexOf('src="sidebar.js"');
+  if (coreScript < 0 || sidebarScript < 0 || coreScript > sidebarScript) {
+    errors.push('panel.html phải nạp core/bundle.js trước sidebar.js');
+  }
+} catch {
+  errors.push('thiếu panel.html');
+}
+
+for (const required of ['core/bundle.js', 'core/prompts.js', 'core/preservation.js']) {
+  if (!existsSync(join(EXT, required))) errors.push(`thiếu artifact sinh tự động: ${required}`);
 }
 
 for (const [size, path] of Object.entries(manifest.icons || {})) {

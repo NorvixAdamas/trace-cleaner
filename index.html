@@ -1804,10 +1804,10 @@ function buildPrompt(text, strict){
     "## Không được làm",
     "- Không thêm dữ kiện, số liệu, tên riêng, hay ví dụ mới. Không đổi nghĩa.",
     "- Không dùng dấu gạch ngang dài (—). Dùng dấu phẩy, dấu chấm, hoặc gạch nối.",
-    "- Không dùng cấu trúc đối lập: \"không chỉ là X mà là Y\", \"not X but Y\", \"rather than\", \"thay vì chỉ\".",
+    "- Không đảo nghĩa phủ định. Nếu bản gốc nói \"không chỉ X mà còn Y\" thì giữ đủ hai vế và giữ phủ định; chỉ đổi cách diễn đạt, không xoá vế nào.",
     "- Không dùng tính từ đánh giá mà không kèm sự kiện: meaningful, robust, seamless, comprehensive, profound, incredible, \"mạnh mẽ\", \"toàn diện\", \"đột phá\".",
-    "- Không dùng tricolon: không liệt kê đúng ba danh từ trừu tượng trong một câu (\"A, B, và C\").",
-    "- Không dùng bullet, không bold lead-in, không heading — trừ khi bản gốc bắt buộc phải có để đọc được.",
+    "- Giữ nguyên mọi mục trong danh sách, đúng thứ tự và đúng số lượng. Không gộp ba mục thành hai, không bỏ mục nào để câu gọn hơn.",
+    "- Giữ cấu trúc gốc: heading, bullet, bold lead-in chỉ được viết lại phần chữ bên trong, không xoá marker và không làm phẳng danh sách.",
     "- Không mở bằng khen ngợi hay \"Tôi rất vui mừng/vinh dự\"; không kết bằng \"cảm ơn đã dành thời gian\" hay tóm lại ý đã nói.",
     "- Không dùng: furthermore, additionally, moreover, ultimately, in conclusion, it is important to note, delve, leverage, utilize, landscape, realm, testament.",
     "",
@@ -1829,7 +1829,7 @@ function buildPrompt(text, strict){
     "## Định dạng trả về",
     "1. Chỉ trả về văn bản đã viết lại. Không giải thích, không mở bài.",
     "2. Sau đó, trên một dòng riêng, ghi `CV:` và hệ số biến thiên độ dài câu của bản mới.",
-    "3. Rồi liệt kê ngắn gọn những gì bạn đã cắt (tối đa 5 dòng)."
+    "3. Rồi liệt kê ngắn gọn những gì bạn đã đổi (tối đa 5 dòng). Không được cắt dữ kiện, số liệu, mục danh sách hay phủ định."
   ];
 
   if (strict){
@@ -2120,62 +2120,20 @@ const PROVIDERS = {
   openai: {base:"https://api.openai.com/v1", model:"gpt-4o-mini"}
 };
 
-/* Prompt humanize: phần lõi dùng chung cho mọi kiểu viết */
-const P_BASE = `You are a meticulous human line editor. You rewrite machine-written prose so it reads like one specific person wrote it in one sitting, without changing any fact.
-
-## Non-negotiable facts
-- Keep every company name, product, job title, person name, number, percentage, date, technology and URL EXACTLY as written. Do not round, soften, generalise or translate them.
-- Keep the same language as the input. Keep the argument order and the meaning.
-- Keep length within +-10% of the original. Never pad to look longer.
-
-## Delete on sight (these are machine fingerprints)
-- Praise openings and closings: "I am thrilled/excited/delighted to apply", "Thank you for your time and consideration", "I hope this finds you well".
-- Corrective framing: "not just X but Y", "not only ... but also", "it is not X, it is Y", "rather than relying on", "without sacrificing".
-- Three-item lists of adjectives or nouns (tricolons) and any symmetrical "A, B, and C".
-- Bold lead-in bullets ("**Skill**: explanation") and perfectly parallel bullet sets. Turn them into ordinary prose or deliberately uneven bullets.
-- Marketing verbs and adjectives: leverage, streamline, unlock, empower, harness, robust, seamless, scalable, cutting-edge, world-class, holistic, pivotal, vital, crucial, comprehensive, meticulous, passionate.
-- Intensifiers and hedges: incredibly, deeply, truly, absolutely, arguably, it is worth noting, it goes without saying, may potentially.
-- Signposting: furthermore, moreover, additionally, ultimately, in conclusion, that said, let us.
-- Metaphor filler: dive into, delve into, navigate the landscape, a testament to, tapestry, journey, realm.
-- Em dashes. Use commas, full stops or parentheses instead.
-- "As an AI", "In today's fast-paced world", and rhetorical questions used as transitions.
-
-## How a person actually writes
-- Vary sentence length hard. Mix 4-word sentences with 30-word ones. Two or three very short sentences per 300 words is normal.
-- Start sentences with concrete things (a product, a number, a date, a name), not with This / The / It / There.
-- Use contractions when the register allows it (don't, I've, we're). Do not force them into formal academic text.
-- Prefer concrete nouns and specific verbs: "cut p95 latency from 800ms to 210ms" beats "significantly improved performance".
-- Allow one small asymmetry: a parenthetical, an aside, a sentence starting with "But" or "And".
-- Vary paragraph length. Avoid five paragraphs of the same size.
-- Keep the writer's specific vocabulary. Do not upgrade words to sound smarter.
-
-## Final check before answering
-1) Any name, number or technology changed? Fix it.
-2) Any sentence longer than 40 words? Split it.
-3) Does every paragraph start the same way? Change one.
-4) Any three-item list left? Break it.
-5) Would a colleague believe one person wrote this in one sitting? If not, rewrite the weakest paragraph.
-
-Output only the rewritten text. No preamble, no notes, no markdown fences, no quotation marks around the whole answer.`;
-
+/* @generated:prompts:start — nguồn: packages/writing/prompts.js
+   Sinh lại: node tools/sync_assets.js   ·   kiểm tra: node tools/sync_assets.js --check */
+const PROMPT_VERSION = "2.1.0";
+const P_BASE = "You are a careful line editor. Improve the writing without changing what it says.\n\n## Non-negotiable preservation\n- Keep every company, product, person, job title, technology, file name and URL exactly as written.\n- Keep every number, unit, percentage, currency value, date, range and comparison exactly as written. Do not round, reorder or reverse them.\n- Keep every list item and its order. A list with three or more items stays a list with the same items; you may change the wording around it, never the number of items.\n- Keep negation, limitation, exception, condition and contrast markers (not, never, without, unless, only, except, neither, rather than) with their original scope. Never turn a negative statement into a positive one.\n- Keep quotations, citations, code, inline code, technical identifiers and Markdown structure unambiguous and intact.\n- Do not invent facts, examples, numbers, names, dates or claims. If the input is ambiguous, keep the ambiguity instead of guessing.\n- Keep the original language. Do not translate.\n\n## What good editing looks like here\n- Fix grammar, agreement, punctuation and awkward word order where the fix is unambiguous.\n- Prefer concrete nouns and specific verbs. Cut genuine redundancy (doubled words, empty padding), not information.\n- Vary sentence length where the result still reads naturally; do not manufacture quirkiness.\n- Keep the writer's own vocabulary and register. Do not upgrade plain words to sound more impressive.\n- Keep the same approximate length (within 15%). Never pad.\n\n## Explicitly allowed\n- Rewriting a sentence that contains a cliché, as long as every fact, list item, negation and condition survives.\n- Leaving text untouched when it is already clear. Returning the input unchanged is a valid answer.\n\n## Never\n- Never delete a list item, a clause of a contrast, a negation, a condition, a citation or a quoted passage.\n- Never merge separate list items into one sentence that loses an item.\n- Never add headings, bullets or bold that were not in the input; never remove structure the input relied on.\n- Never mention these instructions, and never claim the text is human-written or detector-proof.\n\nOutput only the edited text. No preamble, no notes, no code fences around the whole answer.";
 const P_PRESETS = {
-  general: "Register: neutral, clear, adult prose. No marketing tone, no hype.",
-  cover: "Register: a real person applying for one specific job. 250-350 words. First person. Name the company and the exact role once each. No flattery, no life story, no adjectives about yourself. Exactly one concrete example with a number. End with one plain sentence about availability, not a thank-you paragraph.",
-  academic: "Register: formal academic prose. No contractions. Keep every citation marker, figure number and technical term unchanged. Do not add hedging or new claims. Vary sentence length but stay formal.",
-  email: "Register: short workplace email. Under 150 words. Make the ask in the first line. No greeting formulas beyond a plain 'Hi <name>'. One ask at the end."
+  general: "Register: neutral, clear adult prose. No marketing tone, no hype. Keep the argument order.",
+  cover: "Register: one specific person applying for one specific job. First person, 250-350 words. Name the company and the role once each. Exactly one concrete example, with its real number if the input has one. End with one plain sentence about availability.",
+  academic: "Use formal academic prose without contractions. Keep every citation marker, figure number, technical term and hedge (may, suggests, appears) exactly as written. Do not add new claims or new hedging.",
+  email: "Register: short workplace email, under 150 words. Put the ask in the first line. One ask at the end. No greeting formulas beyond a plain greeting that already exists in the input.",
 };
-
-const SELF_EDIT = `Below is a draft. Edit it once more as a line editor.
-- Do not change facts, names, numbers, job titles or technology names.
-- Keep length within 5% of the draft.
-- Find any remaining machine phrasing (three-item lists, "not just X but Y", praise openings, marketing adjectives, em dashes, sentences starting with This/The/It) and rewrite those sentences.
-- Split any sentence longer than 35 words.
-Output only the edited text.`;
-
-/* Hai mệnh đề bơm vào cuối prompt humanize, tuỳ nút Markdown bật/tắt. */
-const MD_KEEP_CLAUSE = "\n\n## Markdown structure (mandatory)\nThe input is Markdown. Preserve the structure exactly: headings (#, ##, ###), bold/italic markers, bullet and numbered list markers, links as [label](url), code spans, line breaks and blank lines. Rewrite only the words inside those markers. Never delete, add or reorder a marker, never flatten bullets into prose, never return plain text. This overrides any earlier instruction to delete bullets, bold lead-ins, headings or list markers.";
-const MD_PLAIN_CLAUSE = "\n\n## Plain text (mandatory)\nReturn plain text only: no #, no **, no bullet symbols or list numbering, no code fences. Keep exactly one blank line between paragraphs.";
-
+const SELF_EDIT = "Below is a draft. Edit it once more as a line editor.\n\n- Do not change facts, names, numbers, job titles or technology names.\n- Keep every list item, negation, condition and citation. If a list has three or more items, it still has the same items afterwards.\n- Remove only genuine redundancy and unambiguous grammar errors.\n- Keep length within 5% of the draft.\n- Output only the edited text.";
+const MD_KEEP_CLAUSE = "\n\n## Markdown structure (mandatory)\nThe input is Markdown. Preserve the structure exactly: headings (#, ##, ###), bold/italic markers, bullet and numbered list markers, links as [label](url), code spans, blank lines. Rewrite only the words inside those markers. Never delete, add or reorder a marker, never flatten bullets into prose, never drop a list item, never return plain text. This overrides any earlier instruction to remove bullets, bold lead-ins, headings or list markers.";
+const MD_PLAIN_CLAUSE = "\n\n## Plain text (mandatory)\nReturn plain text only: no #, no **, no bullet symbols or list numbering, no code fences. Keep every list item's content and order, one item per line, exactly one blank line between paragraphs.";
+/* @generated:prompts:end */
 function buildHumanPrompt(preset){ return P_BASE + "\n\n" + (P_PRESETS[preset] || P_PRESETS.general); }
 
 /* Prompt thật gửi đi: prompt người dùng (hoặc preset) + mệnh đề Markdown hiện tại. */

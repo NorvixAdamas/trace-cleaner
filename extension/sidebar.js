@@ -2,121 +2,36 @@
    Không phụ thuộc chrome.* ; content.js truyền hooks vào nên file này test được standalone. */
 
 window.TraceSidebar = (() => {
-  const INVIS = /[\u200B-\u200D\u2060\uFEFF\u00AD\u180E\u200E\u200F\u061C]/g;
-  const BLANK = /[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g;
-  const PUA   = /[\uE000-\uF8FF]/g;
-
-  const SIGNPOST = /\b(furthermore|moreover|additionally|ultimately|in conclusion|that said|notably),?\s+/gi;
-  const INTENS = /\b(incredibly|extremely|absolutely|utterly|genuinely|truly|really|very|highly|profoundly|certainly|definitely)\s+/gi;
-  const PRAISE_APPLY = /\bI am (thrilled|excited|delighted|honou?red) to apply\b/gi;
-  const PRAISE_ANY = /\bI am (thrilled|excited|delighted|honou?red) to\b/gi;
-  const BOILER_LINE = /^[ \t]*(i hope this (email|message|note)?\s*finds you well|thank you for your (time|consideration)[^.!?\n]*)[.!]?[ \t]*$/gim;
-  const FRAME1 = /\bnot just\s+([^,.;]{2,45}?)\s+but (?:also\s+)?([^,.;]{2,45}?)(?=[,.;]|$)/gi;
-  const FRAME2 = /\b(?:it is|it's|this is) not (?:just\s|only\s)?([^,.;]{2,40}),\s*(?:it is|it's|but)\s+([^,.;]{2,40})/gi;
-  const TRICOLON = /([^,;\n]{2,45}),\s([^,;\n]{2,45}),\s+and\s([^,;\n]{2,35})([.;])/g;
-  const TRICOLON2 = /\b(\w+),\s(\w+), and (\w+)\b/g;
-
-  const WORDMAP = [
-    [/\brobust\b/gi, "solid"], [/\bseamless(ly)?\b/gi, m => m.toLowerCase().startsWith("seamlessly") ? "smoothly" : "smooth"],
-    [/\bcutting-edge\b/gi, "current"], [/\bworld-class\b/gi, "strong"], [/\bholistic\b/gi, "complete"],
-    [/\bpivotal\b/gi, "key"], [/\bcrucial\b/gi, "key"], [/\bvital\b/gi, "key"],
-    [/\bcomprehensive\b/gi, "full"], [/\bmeticulous(ly)?\b/gi, m => m.endsWith("ly") ? "carefully" : "careful"],
-    [/\bpassionate\b/gi, "keen"], [/\binnovative\b/gi, "new"], [/\bdynamic\b/gi, "active"],
-    [/\bleveraged?\b/gi, "used"], [/\bleverages?\b/gi, "uses"], [/\bleveraging\b/gi, "using"],
-    [/\bstreamlin(e|ed|es|ing)\b/gi, m => "simplif" + ({ e: "y", ed: "ied", es: "ies", ing: "ying" }[m.slice(-2)] || "y")],
-    [/\bunlock(ed|s|ing)?\b/gi, m => m.replace(/^unlock/i, "open")],
-    [/\bempower(ed|s|ing)?\b/gi, m => m.replace(/^empower/i, "help")],
-    [/\butili[sz]e(d|s)?\b/gi, m => m.replace(/utili[sz]e/i, "use")],
-    [/\butili[sz]ing\b/gi, "using"],
-    [/\bdelve into\b/gi, "look at"], [/\bdive into\b/gi, "look at"],
-    [/\bshed light on\b/gi, "explain"], [/\ba testament to\b/gi, "proof of"]
-  ];
-
-  const TELLS = [
-    [/\bnot just\b[^.]{0,40}\bbut\b/gi, "not just … but"],
-    [/\bnot only\b[^.]{0,40}\bbut also\b/gi, "not only … but also"],
-    [/\brather than\b/gi, "rather than"],
-    [/\b(robust|seamless|scalable|cutting-edge|world-class|holistic|pivotal|vital|crucial|comprehensive|meticulous|passionate)\b/gi, "từ marketing"],
-    [/\b(furthermore|moreover|additionally|ultimately|in conclusion)\b/gi, "signpost"],
-    [/\b(delve|tapestry|realm|journey)\b/gi, "ẩn dụ rỗng"],
-    [/—/g, "em dash"],
-    [/[\u201C\u201D\u2018\u2019]/g, "ngoặc cong"],
-    [/[\u200B-\u200D\u2060\uFEFF\u00AD\uE000-\uF8FF]/g, "ký tự ẩn"]
-  ];
-
-  function stats(text) {
-    const s = { vis: 0, blank: 0, pua: 0, quotes: 0, emdash: 0, dbl: 0, tells: 0 };
-    s.vis = (text.match(INVIS) || []).length;
-    s.blank = (text.match(BLANK) || []).length;
-    s.pua = (text.match(PUA) || []).length;
-    s.quotes = (text.match(/[\u201C\u201D\u2018\u2019\u00AB\u00BB]/g) || []).length;
-    s.emdash = (text.match(/—/g) || []).length;
-    s.dbl = (text.match(/ {2,}/g) || []).length;
-    for (const [re] of TELLS) s.tells += (text.match(re) || []).length;
-    return s;
-  }
-
-  /* Xoá toàn bộ marker Markdown rồi căn lại — dùng khi nút Markdown tắt. */
-  function stripMarkdown(text) {
-    let n = 0;
-    const hit = () => { n++; };
-    let t = text.replace(/\r\n?/g, "\n");
-    t = t.replace(/```[^\n]*\n?([\s\S]*?)```/g, (m, body) => { hit(); return body.replace(/\n{2,}/g, "\n"); });
-    t = t.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
-      (m, alt, url) => { hit(); return alt ? (alt === url ? alt : alt + " (" + url + ")") : url; });
-    t = t.replace(/\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (m, label, url) => {
-      hit();
-      if (/^https?:\/\//i.test(label)) return label;
-      return label === url ? label : label + " (" + url + ")";
-    });
-    t = t.replace(/<((?:https?:\/\/|mailto:)[^>\s]+)>/g, (m, u) => { hit(); return u; });
-    t = t.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, () => { hit(); return ""; });
-    t = t.replace(/^[ \t]{0,3}>[ \t]?/gm, () => { hit(); return ""; });
-    t = t.replace(/^[ \t]{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, () => { hit(); return ""; });
-    t = t.replace(/\*\*\*([^*\n]+)\*\*\*/g, (m, x) => { hit(); return x; });
-    t = t.replace(/\*\*([^*\n]+)\*\*/g, (m, x) => { hit(); return x; });
-    t = t.replace(/__([^_\n]+)__/g, (m, x) => { hit(); return x; });
-    t = t.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, (m, pre, x) => { hit(); return pre + x; });
-    t = t.replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:!?]|$)/g, (m, pre, x) => { hit(); return pre + x; });
-    t = t.replace(/`([^`\n]+)`/g, (m, x) => { hit(); return x; });
-    t = t.replace(/^[ \t]*[-*+•][ \t]+/gm, () => { hit(); return ""; });
-    t = t.replace(/^[ \t]*\d{1,3}[.)][ \t]+/gm, () => { hit(); return ""; });
-    t = t.split("\n").map(l => l.replace(/[ \t]+$/g, "")).join("\n")
-         .replace(/\n{3,}/g, "\n\n")
-         .replace(/^\s+|\s+$/g, "");
-    return { text: t, n };
-  }
-
-  function clean(text, opts) {
-    const o = Object.assign({ structural: true, words: false, markdown: true }, opts || {});
-    const before = stats(text);
-    let guarded = false;
-    let t = text.replace(/\r\n?/g, "\n");
-    t = t.replace(INVIS, "").replace(PUA, "").replace(BLANK, " ");
-    t = t.replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"')
-         .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
-         .replace(/[\u00AB\u00BB]/g, '"');
-    t = t.replace(/\s*—\s*/g, ", ");
-    if (o.structural && t.trim()) {
-      const before2 = t;
-      let s = t.replace(PRAISE_APPLY, "I am applying").replace(PRAISE_ANY, "I want to");
-      s = s.replace(BOILER_LINE, "");
-      s = s.replace(FRAME1, (m, a, b) => a + " and " + b);
-      s = s.replace(FRAME2, (m, a, b) => a);
-      s = s.replace(TRICOLON, (m, a, b, c, end) => "" + a + " and " + b + end);
-      s = s.replace(TRICOLON2, (m, a, b, c) => a + " and " + b);
-      s = s.replace(SIGNPOST, "");
-      s = s.replace(INTENS, "");
-      // chốt an toàn: nếu bước sửa câu xoá quá 65% văn bản thì bỏ, giữ bản chỉ làm sạch ký tự
-      if (s.trim().length >= before2.trim().length * 0.35) t = s;
-      else guarded = true;
+  /* Toàn bộ phép làm sạch nằm trong packages/core (bundle extension/core/bundle.js).
+     Sidebar chỉ là UI adapter: không giữ regex riêng, không xoá mục danh sách,
+     không đảo phủ định, không đụng ZWJ/ZWNJ/variation selector. */
+  function core(){
+    const c = typeof globalThis !== "undefined" ? globalThis.TraceCore : null;
+    if (!c || typeof c.cleanText !== "function" || typeof c.countsFor !== "function") {
+      throw new Error("thiếu core dùng chung (extension/core/bundle.js) — tải lại extension");
     }
-    if (o.words) for (const [re, rep] of WORDMAP) t = t.replace(re, rep);
-    if (!o.markdown) t = stripMarkdown(t).text;
-    t = t.replace(/[ \t]{2,}/g, " ").replace(/ +([,.;:!?])/g, "$1")
-         .replace(/\n{3,}/g, "\n\n").trim();
-    const after = stats(t);
-    return { text: t, removed: before, left: after, guarded };
+    return c;
+  }
+
+  function stats(text){
+    return core().countsFor(text);
+  }
+
+  /* options: { markdown } — markdown=false nghĩa là xoá marker, giữ nội dung. */
+  function clean(text, opts){
+    const o = opts || {};
+    const c = core();
+    const before = c.countsFor(text);
+    const result = c.cleanText(text, { markdown: o.markdown !== false });
+    return {
+      text: result.text,
+      removed: before,
+      left: result.stats,
+      guarded: false,
+      audit: result.audit,
+      warnings: result.warnings,
+      log: result.log
+    };
   }
 
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -169,6 +84,9 @@ window.TraceSidebar = (() => {
   label.chk:has(input:checked) { border-color: #2f9be8; color: #eaf4ff; background: #12243a; }
   .chain { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px; border: 1px dashed #22314a; border-radius: 10px; }
   .chain .lab { font-size: 10.5px; letter-spacing: .1em; color: #7f95b3; }
+  .chain select { background: #0e1626; color: #e6edf7; border: 1px solid #22314a; border-radius: 8px;
+                  padding: 5px 7px; font: 11.5px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .chain select:focus-visible { outline: 2px solid #38bdf8; outline-offset: 1px; }
   .status { font-size: 11.5px; color: #8ea3c0; min-height: 16px; white-space: pre-wrap; }
   .status.err { color: #ff9c8a; }
   .status.ok { color: #7ee0a8; }
@@ -194,6 +112,7 @@ window.TraceSidebar = (() => {
         <label class="chk"><input type="checkbox" id="cClean" checked> Làm sạch</label>
         <label class="chk"><input type="checkbox" id="cHuman" checked> Humanize</label>
         <label class="chk" title="Bật: giữ heading / **bold** / bullet / link và dặn AI giữ nguyên cấu trúc. Tắt: xoá hết định dạng rồi tự căn lại."><input type="checkbox" id="cMd" checked> Markdown</label>
+        <select id="cMode" title="Kiểu viết lại — cùng bộ chế độ với web"></select>
         <button id="btnSwap" class="ghost" title="Đổi thứ tự chạy">⇄ <span id="order">Humanize → Làm sạch</span></button>
         <button id="btnRun" class="primary">Chạy</button>
       </div>
@@ -235,6 +154,21 @@ window.TraceSidebar = (() => {
     let busy = false;
     let mdKeep = localStorage.getItem("traceMdKeep") !== "0";
     let lastRunOriginal = "";
+    // Kiểu viết lại: cùng danh sách với web (packages/writing/prompts.js).
+    const MODE_LABELS = [
+      ["general", "Tổng quát"], ["proofread", "Proofread"], ["clarity", "Clarity"],
+      ["concise", "Concise"], ["natural", "Natural flow"], ["professional", "Professional"],
+      ["academic", "Học thuật"], ["cover", "Cover letter"], ["email", "Email"]
+    ];
+    let mode = localStorage.getItem("traceMode") || "general";
+    if (!MODE_LABELS.some(([value]) => value === mode)) mode = "general";
+    const modeSel = $("cMode");
+    modeSel.innerHTML = MODE_LABELS.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
+    modeSel.value = mode;
+    modeSel.addEventListener("change", () => {
+      mode = modeSel.value;
+      try { localStorage.setItem("traceMode", mode); } catch {}
+    });
 
     // prompt dùng chung với web app (đồng bộ 2 chiều qua chrome.storage)
     const promptTa = $("promptTa"), promptStatus = $("promptStatus");
@@ -360,6 +294,7 @@ window.TraceSidebar = (() => {
       ].filter(([, v]) => v > 0).map(([k, v]) => `<span>${esc(k)} <b>${v}</b></span>`);
       const left = cleaned.left.tells;
       m.innerHTML = parts.join("") + (parts.length ? "" : `<span>không thấy dấu vết ký tự</span>`) +
+        (cleaned.audit && cleaned.audit.length ? `<span title="Số ký tự đã sửa, có audit từng ký tự">đã sửa <b>${cleaned.audit.length}</b></span>` : "") +
         `<span>còn <b>${left}</b> tell</span>` +
         (cleaned.guarded ? `<span title="Bước sửa câu xoá quá nhiều nên đã bỏ">⚠ giữ nguyên câu</span>` : "");
     }
@@ -385,16 +320,16 @@ window.TraceSidebar = (() => {
           if (step === "human") {
             say("Humanize: đang gọi model…");
             if (typeof hooks.humanize !== "function") throw new Error("extension chưa nối background");
-            const r = await hooks.humanize(cur, promptText, { markdown: mdKeep });
+            const r = await hooks.humanize(cur, promptText, { markdown: mdKeep, mode });
             if (r && typeof r === "object" && typeof r.text === "string"){ cur = r.text; guard = r.preservation || null; }
             else cur = r;
           } else {
             say("Làm sạch…");
-            lastClean = clean(cur, { structural: true, words: true, markdown: mdKeep });
+            lastClean = clean(cur, { markdown: mdKeep });
             cur = lastClean.text;
           }
         }
-        if (!lastClean) lastClean = clean(cur, { structural: true, words: true, markdown: mdKeep });
+        if (!lastClean) lastClean = clean(cur, { markdown: mdKeep });
         else lastClean = Object.assign({}, lastClean, { left: stats(cur) }); // "còn tell" phải đếm trên kết quả cuối
         output.value = cur;
         paintMetrics(lastClean);
@@ -425,7 +360,7 @@ window.TraceSidebar = (() => {
       const t = input.value.trim();
       if (!t) return say("Chưa có văn bản.", "err");
       lastRunOriginal = input.value;
-      const c = clean(t, { structural: true, words: true, markdown: mdKeep });
+      const c = clean(t, { markdown: mdKeep });
       output.value = c.text;
       paintMetrics(c);
       say("Chỉ làm sạch (không gọi API).", "ok");
@@ -439,7 +374,7 @@ window.TraceSidebar = (() => {
       lastRunOriginal = input.value;
       try {
         say("Humanize: đang gọi model…");
-        const r = await hooks.humanize(t, promptText, { markdown: mdKeep });
+        const r = await hooks.humanize(t, promptText, { markdown: mdKeep, mode });
         const outText = r && typeof r === "object" ? r.text : r;
         output.value = outText;
         paintMetrics(clean(outText, { markdown: mdKeep }));

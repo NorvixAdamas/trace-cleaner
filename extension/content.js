@@ -106,10 +106,18 @@
       humanize: (text, prompt, opts) => new Promise((resolve, reject) => {
         if (!chrome || !chrome.runtime || !chrome.runtime.id) return reject(new Error("ngữ cảnh extension không hợp lệ — tải lại trang"));
         getCfg().then(cfg => {
-          chrome.runtime.sendMessage({ type: "humanize", text, cfg: Object.assign({}, cfg, { prompt: prompt || "", markdown: !!(opts && opts.markdown) }) }, res => {
+          chrome.runtime.sendMessage({ type: "humanize", text, cfg: Object.assign({}, cfg, {
+            prompt: prompt || "",
+            markdown: !!(opts && opts.markdown),
+            mode: (opts && opts.mode) || "general"
+          }) }, res => {
             if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
             if (!res) return reject(new Error("background không trả lời — tải lại extension"));
-            if (res.error) return reject(new Error(res.error));
+            if (res.error) {
+              const error = new Error(res.error);
+              error.code = res.code || "PROVIDER_ERROR";
+              return reject(error);
+            }
             resolve(res);
           });
         });
