@@ -37,6 +37,10 @@ How a person writes
 
 Output only the rewritten text. No preamble, no notes, no markdown fences.`;
 
+/* Nút Markdown trong sidebar chọn một trong hai mệnh đề này. */
+const MD_KEEP_CLAUSE = "\n\nMarkdown structure (mandatory)\nThe input is Markdown. Preserve the structure exactly: headings (#, ##, ###), bold/italic markers, bullet and numbered list markers, links as [label](url), code spans, line breaks and blank lines. Rewrite only the words inside those markers. Never delete, add or reorder a marker, never flatten bullets into prose, never return plain text. This overrides any earlier instruction to delete bullets, bold lead-ins, headings or list markers.";
+const MD_PLAIN_CLAUSE = "\n\nPlain text (mandatory)\nReturn plain text only: no #, no **, no bullet symbols or list numbering, no code fences. Keep exactly one blank line between paragraphs.";
+
 /* ─────────── mở sidebar ─────────── */
 
 function enablePanelOnClick() {
@@ -97,7 +101,8 @@ const isBusyErr = m => /HTTP 503|UNAVAILABLE|high demand|overloaded/i.test(m);
 
 async function humanize(text, cfg) {
   if (!text.trim()) throw new Error("văn bản rỗng");
-  const promptText = (cfg.prompt || "").trim() || PROMPT;
+  let promptText = (cfg.prompt || "").trim() || PROMPT;
+  promptText += cfg.markdown ? MD_KEEP_CLAUSE : MD_PLAIN_CLAUSE;
   const provider = cfg.provider === "openai" ? "openai" : "google";
   const base = (cfg.base || (provider === "google"
     ? "https://generativelanguage.googleapis.com/v1beta"

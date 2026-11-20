@@ -74,10 +74,10 @@
     return false;
   }, [text]);
 
-  const humanize = (text, prompt) => new Promise((resolve, reject) => {
+  const humanize = (text, prompt, opts) => new Promise((resolve, reject) => {
     if (!hasRuntime) return reject(new Error("Chưa cài như extension — mở panel qua icon trên toolbar."));
     getCfg().then(cfg => {
-      chrome.runtime.sendMessage({ type: "humanize", text, cfg: Object.assign({}, cfg, { prompt: prompt || "" }) }, res => {
+      chrome.runtime.sendMessage({ type: "humanize", text, cfg: Object.assign({}, cfg, { prompt: prompt || "", markdown: !!(opts && opts.markdown) }) }, res => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
         if (!res) return reject(new Error("background không trả lời — thử tải lại extension"));
         if (res.error) return reject(new Error(res.error));

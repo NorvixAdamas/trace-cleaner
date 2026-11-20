@@ -103,10 +103,10 @@
     document.documentElement.appendChild(host);
 
     ui = window.TraceSidebar.mount(shadow, {
-      humanize: (text, prompt) => new Promise((resolve, reject) => {
+      humanize: (text, prompt, opts) => new Promise((resolve, reject) => {
         if (!chrome || !chrome.runtime || !chrome.runtime.id) return reject(new Error("ngữ cảnh extension không hợp lệ — tải lại trang"));
         getCfg().then(cfg => {
-          chrome.runtime.sendMessage({ type: "humanize", text, cfg: Object.assign({}, cfg, { prompt: prompt || "" }) }, res => {
+          chrome.runtime.sendMessage({ type: "humanize", text, cfg: Object.assign({}, cfg, { prompt: prompt || "", markdown: !!(opts && opts.markdown) }) }, res => {
             if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
             if (!res) return reject(new Error("background không trả lời — tải lại extension"));
             if (res.error) return reject(new Error(res.error));
@@ -146,7 +146,7 @@
     }
   }, true);
 
-  // Dựng sẵn sau khi trang ổn định (không chiếm chỗ, ẩn)
-  if (document.readyState === "complete" || document.readyState === "interactive") setTimeout(build, 0);
-  else window.addEventListener("DOMContentLoaded", build, { once: true });
+  // Không dựng sẵn sidebar: ~60 node + CSS trong shadow DOM chỉ được tạo khi người dùng
+  // thật sự mở nó (nút trên toolbar, Alt+Shift+S, hoặc message "toggle"), nên mỗi tab
+  // không phải trả giá bộ nhớ lúc tải trang.
 })();

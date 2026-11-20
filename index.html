@@ -193,7 +193,7 @@
   #src{background:transparent;padding:16px 18px}
   #src:focus{background:rgba(94,234,212,.02)}
   #src.dropon{outline:2px dashed #5eead4;outline-offset:-6px;background:rgba(94,234,212,.06)}
-  .row{background:rgba(21,28,39,.85);backdrop-filter:blur(6px)}
+  .row{background:#151c27}
   button{border-radius:9px;background:linear-gradient(180deg,#232b37,#1b222c);transition:.13s}
   button:hover{transform:translateY(-1px);border-color:var(--line2);box-shadow:0 6px 18px -10px rgba(0,0,0,.9)}
   button:active{transform:none}
@@ -201,13 +201,13 @@
     box-shadow:0 6px 20px -9px rgba(94,234,212,.6)}
   button.ghost{background:transparent;border-color:transparent;color:#93a1b5}
   button.ghost:hover{background:#1c2431;border-color:var(--line)}
-  .tabs{background:rgba(11,15,20,.9);backdrop-filter:blur(12px);padding:9px 12px;gap:3px}
+  .tabs{background:#0b0f14;padding:9px 12px;gap:3px}
   .tabs button{padding:7px 12px;border-radius:8px;font-size:12px;color:#95a3b7;border:0;background:transparent}
   .tabs button:hover{background:#1a2230;color:var(--tx);transform:none;box-shadow:none}
   .tabs button.on{background:rgba(94,234,212,.12);color:var(--accent);box-shadow:none;transform:none}
   .tab{padding:16px 18px}
   h2{font-size:11.5px;letter-spacing:.09em;margin:20px 0 9px}
-  th{position:sticky;top:0;z-index:1;background:rgba(11,15,20,.97);backdrop-filter:blur(6px);
+  th{position:sticky;top:0;z-index:1;background:#0b0f14;
     padding:7px 9px;border-bottom:1px solid var(--line2)}
   td{padding:7px 9px}
   table tr:hover td{background:rgba(94,234,212,.028)}
@@ -241,7 +241,7 @@
   .inp:focus{border-color:var(--accent)}
   .pane.input{display:flex;flex-direction:column;overflow:hidden}
   .ltabs{padding:7px 10px;flex-wrap:nowrap;border-bottom:1px solid var(--line);
-    background:rgba(11,15,20,.6);backdrop-filter:blur(10px)}
+    background:#0b0f14}
   .ltabs button{flex:0 0 auto}
   .ltab{flex:1;min-height:0;display:flex;flex-direction:column}
   #src{flex:1;min-height:120px}
@@ -306,6 +306,33 @@
     #guideToc{max-height:42vh}
     #src{min-height:220px}
   }
+
+  /* ───────── ô text: nút phóng to, kéo giãn tuỳ ý ───────── */
+  .tbwrap{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0}
+  #ltab-text .tbwrap{flex:1;min-height:0}
+  .tbwrap.zoomed{min-height:180px}
+  .expbtn{
+    position:absolute;top:6px;right:6px;z-index:6;width:24px;height:24px;padding:0;
+    display:grid;place-items:center;font:600 12px/1 var(--mono);border-radius:6px;cursor:pointer;
+    background:rgba(16,22,31,.82);border:1px solid var(--line);color:#9aa7ba;opacity:.72;
+  }
+  .expbtn:hover,.expbtn:focus-visible{opacity:1;color:var(--accent);border-color:var(--accent);transform:none;box-shadow:none}
+  textarea.tbzoom{
+    position:fixed!important;left:24px!important;top:56px!important;
+    width:calc(100vw - 48px);height:calc(100vh - 96px);
+    min-width:260px!important;min-height:180px!important;
+    max-width:none!important;max-height:none!important;
+    resize:both!important;overflow:auto!important;z-index:9998;
+    background:#101722!important;border:1px solid var(--accent)!important;border-radius:12px!important;
+    padding:16px 18px!important;box-shadow:0 30px 90px -24px rgba(0,0,0,.92);
+  }
+  #zoomBar{
+    position:fixed;top:14px;right:28px;z-index:9999;display:flex;align-items:center;gap:8px;
+    background:#141b26;border:1px solid var(--line);border-radius:10px;padding:5px 8px;
+    font-size:11.5px;color:var(--dim);box-shadow:0 10px 26px -14px #000;
+  }
+  #zoomBar button{padding:5px 9px;font-size:11.5px}
+  #zoomBar[hidden]{display:none}
 </style>
 </head>
 <body>
@@ -351,6 +378,7 @@
       <label><input type="checkbox" id="chkClean" checked> Làm sạch</label>
       <label title="Gọi model qua API — cần key ở tab Viết lại AI"><input type="checkbox" id="chkHuman" checked> Humanize</label>
       <button id="btnSwapOrder" class="ghost" title="Đổi thứ tự chạy hai bước">⇄ <span id="orderLabel">Humanize → Làm sạch</span></button>
+      <button id="btnMd" class="ghost" aria-pressed="true" title="Bật: giữ heading / **bold** / bullet / link khi làm sạch và dặn AI giữ nguyên cấu trúc. Tắt: xoá hết định dạng rồi tự căn lại.">Markdown: giữ</button>
       <button id="btnRunChain" class="primary">Chạy chuỗi</button>
     </div>
     <fieldset>
@@ -558,6 +586,9 @@
 </div>
 
 <div id="view-guide" class="hidden">
+  <!-- Guide chỉ được dựng khi mở tab: nội dung nằm trong <template> nên lúc tải trang
+       trình duyệt không tạo ~2.500 node cho nó. -->
+  <template id="guideTpl">
   <aside id="guideSide">
     <input id="guideSearch" type="search" placeholder="Tìm trong guide…" autocomplete="off">
     <div id="guideToc"><!-- TOC:START -->
@@ -1067,6 +1098,7 @@ This distinction matters because ...</code></pre>
 <p><em>Tài liệu này là bản đồ, không phải phán quyết. Nếu bạn dùng nó để kết luận về một người, hãy đọc lại §0 điều 1 và §10.2 một lần nữa.</em></p>
 </section>
 <!-- GUIDE:END --></div>
+  </template>
 </div>
 
 <div id="toast" class="toast"></div>
@@ -1393,6 +1425,42 @@ function metric(v, label){
   return `<div class="metric"><b>${v}</b><span>${label}</span></div>`;
 }
 
+/* Xoá toàn bộ định dạng Markdown rồi tự căn lại (khi nút Markdown tắt).
+   Chỉ chạm marker, không đổi chữ; link giữ lại URL dưới dạng text. */
+function stripMarkdown(text){
+  let n = 0;
+  const hit = () => { n++; };
+  let t = text.replace(/\r\n?/g, "\n");
+
+  t = t.replace(/```[^\n]*\n?([\s\S]*?)```/g, (m, body) => { hit(); return body.replace(/\n{2,}/g, "\n"); });
+  t = t.replace(/!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (m, alt, url) => {
+    hit(); return alt ? (alt === url ? alt : alt + " (" + url + ")") : url;
+  });
+  t = t.replace(/\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (m, label, url) => {
+    hit();
+    if (/^https?:\/\//i.test(label)) return label;   /* nhãn đã là URL → bỏ link redirect */
+    return label === url ? label : label + " (" + url + ")";
+  });
+  t = t.replace(/<((?:https?:\/\/|mailto:)[^>\s]+)>/g, (m, u) => { hit(); return u; });
+  t = t.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, () => { hit(); return ""; });
+  t = t.replace(/^[ \t]{0,3}>[ \t]?/gm, () => { hit(); return ""; });
+  t = t.replace(/^[ \t]{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, () => { hit(); return ""; });
+  t = t.replace(/\*\*\*([^*\n]+)\*\*\*/g, (m, x) => { hit(); return x; });
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, (m, x) => { hit(); return x; });
+  t = t.replace(/__([^_\n]+)__/g, (m, x) => { hit(); return x; });
+  t = t.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, (m, pre, x) => { hit(); return pre + x; });
+  t = t.replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:!?]|$)/g, (m, pre, x) => { hit(); return pre + x; });
+  t = t.replace(/`([^`\n]+)`/g, (m, x) => { hit(); return x; });
+  t = t.replace(/^[ \t]*[-*+•][ \t]+/gm, () => { hit(); return ""; });
+  t = t.replace(/^[ \t]*\d{1,3}[.)][ \t]+/gm, () => { hit(); return ""; });
+
+  /* căn lại: bỏ khoảng trắng cuối dòng, dòng trống thừa, dòng kẻ rỗng */
+  t = t.split("\n").map(l => l.replace(/[ \t]+$/g, "")).join("\n")
+       .replace(/\n{3,}/g, "\n\n")
+       .replace(/^[\s]+|[\s]+$/g, "");
+  return {text: t, n};
+}
+
 /* ──────────────────────────  CLEAN  ────────────────────────── */
 
 function cleanText(text, o){
@@ -1539,7 +1607,8 @@ function cleanText(text, o){
     }
     if (fr) log.frames = fr;
 
-    // 7. bullet song song ≥3 dòng → đoạn văn (bỏ marker + bold label)
+    // 7. bullet song song ≥3 dòng → đoạn văn (bỏ marker + bold label) — bỏ qua khi đang giữ Markdown
+    if (!o.markdown){
     let bl = 0;
     const ls = out.split("\n");
     const res = [];
@@ -1551,7 +1620,7 @@ function cleanText(text, o){
         for (let k = i; k < j; k++){
           if (run >= 3){
             const ln = ls[k].replace(/^[ \t]*[-*•]\s+/, "").replace(/\*\*|__/g, "");
-            if (res.length && res[res.length - 1] !== "") res.push("");
+            if (k === i && res.length && res[res.length - 1] !== "") res.push("");
             res.push(ln);
             bl++;
           } else {
@@ -1563,6 +1632,7 @@ function cleanText(text, o){
     }
     out = res.join("\n");
     if (bl) log.bullets = bl;
+    }
 
     // 8. rút gọn: "do not" → "don't" (chỉ khi văn bản phần lớn là tiếng Anh)
     const CONTRACT = [
@@ -1607,21 +1677,25 @@ function cleanText(text, o){
     if (phraseHits) log.phrases = phraseHits;
   }
 
-  if (o.aggressive){
-    const before = out.length;
-    out = out
-      .replace(/\*\*|__/g, "")
-      .replace(/`{1,3}/g, "")
-      .replace(/^#{1,6}\s+/gm, "")
-      .replace(/^\s*[-*+]\s+/gm, "");
-    if (out.length !== before) log.markdown = 1;
+  /* Markdown tắt: xoá hết marker rồi căn lại. Bật: giữ nguyên cấu trúc. */
+  if (!o.markdown){
+    const md = stripMarkdown(out);
+    out = md.text;
+    if (md.n) log.markdown = md.n;
   }
+
+  /* URL phải sống sót qua bước thêm khoảng trắng sau ':' và viết hoa đầu câu */
+  const urls = [];
+  out = out.replace(/\b(?:https?:\/\/|mailto:)[^\s)\]<>"']+/gi, m => {
+    urls.push(m);
+    return "\u0000" + (urls.length - 1) + "\u0000";
+  });
 
   /* chuẩn hoá khoảng trắng + dấu câu */
   out = out
     .replace(/[ \t]{2,}/g, " ")
     .replace(/[ \t]+([,.;:!?])/g, "$1")
-    .replace(/([,;:])(?=[^\s])/g, "$1 ")
+    .replace(/([,;:])(?![\s*_`)\]}\/])/g, "$1 ")
     .replace(/[ \t]+$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/^\n+|\n+$/g, "");
@@ -1629,6 +1703,8 @@ function cleanText(text, o){
   /* sau khi cắt filler, viết hoa đầu câu */
   out = out.replace(/(^|[.!?]\s+|\n)([a-zàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ])/g,
     (m, pre, c) => pre + c.toUpperCase());
+
+  out = out.replace(/\u0000(\d+)\u0000/g, (m, i) => urls[+i] || "");
 
   return {text: out, log, notes};
 }
@@ -1646,7 +1722,7 @@ function renderClean(){
       joiner:"ZWJ/ZWNJ giữ lại", vs:"variation selector giữ lại", lineSep:"line separator → \\n",
       homoglyph:"homoglyph xử lý", emDash:"em dash xử lý", enDash:"en dash xử lý",
       quotes:"ngoặc/dấu nháy xử lý", ellipsis:"… xử lý", softHyphen:"soft hyphen đã xoá",
-      phrases:"cụm AI-ism đã thay", markdown:"markdown đã strip",
+      phrases:"cụm AI-ism đã thay", markdown:"markdown đã xoá + căn lại",
       intens:"intensifier đã bỏ", eval:"tính từ đánh giá đã xử lý",
       openclose:"mở/kết sáo đã bỏ", tricolon:"tricolon đã cắt về 2 mục",
       split:"câu dài đã tách tại dấu ;",
@@ -1741,6 +1817,10 @@ function buildPrompt(text, strict){
       "");
   }
 
+  lines.push("", "## Định dạng",
+    mdKeep
+      ? "Giữ nguyên Markdown của bản gốc: heading, in đậm/nghiêng, marker bullet, link dạng [nhãn](url), code span, xuống dòng và dòng trống. Chỉ viết lại phần chữ trong marker, không xoá/thêm marker, không gộp bullet thành đoạn."
+      : "Chỉ trả về plain text: không #, không **, không ký hiệu bullet hay số thứ tự, không code fence; một dòng trống giữa các đoạn.");
   lines.push("", "## VĂN BẢN GỐC", "```", text.trim(), "```");
   return lines.join("\n");
 }
@@ -1756,6 +1836,10 @@ function renderPrompt(strict){
 
 const clamp01 = v => Math.max(0, Math.min(1, v));
 
+/* Markdown: bật = giữ heading / in đậm / bullet / link khi làm sạch và dặn AI giữ cấu trúc;
+tắt = xoá hết marker rồi tự căn lại khoảng trắng. Mặc định bật. */
+let mdKeep = localStorage.getItem("traceMdKeep") !== "0";
+
 function cleanOpts(){
   return {
     blankToSpace: $("optBlank").checked,
@@ -1764,7 +1848,8 @@ function cleanOpts(){
     phrases: $("optPhrases").checked,
     structural: $("optStruct").checked,
     emDash: $("optEm").value,
-    aggressive: $("optAggr").checked
+    aggressive: $("optAggr").checked,
+    markdown: mdKeep
   };
 }
 
@@ -2064,7 +2149,17 @@ const SELF_EDIT = `Below is a draft. Edit it once more as a line editor.
 - Split any sentence longer than 35 words.
 Output only the edited text.`;
 
-const buildHumanPrompt = preset => P_BASE + "\n\n" + (P_PRESETS[preset] || P_PRESETS.general);
+/* Hai mệnh đề bơm vào cuối prompt humanize, tuỳ nút Markdown bật/tắt. */
+const MD_KEEP_CLAUSE = "\n\n## Markdown structure (mandatory)\nThe input is Markdown. Preserve the structure exactly: headings (#, ##, ###), bold/italic markers, bullet and numbered list markers, links as [label](url), code spans, line breaks and blank lines. Rewrite only the words inside those markers. Never delete, add or reorder a marker, never flatten bullets into prose, never return plain text. This overrides any earlier instruction to delete bullets, bold lead-ins, headings or list markers.";
+const MD_PLAIN_CLAUSE = "\n\n## Plain text (mandatory)\nReturn plain text only: no #, no **, no bullet symbols or list numbering, no code fences. Keep exactly one blank line between paragraphs.";
+
+function buildHumanPrompt(preset){ return P_BASE + "\n\n" + (P_PRESETS[preset] || P_PRESETS.general); }
+
+/* Prompt thật gửi đi: prompt người dùng (hoặc preset) + mệnh đề Markdown hiện tại. */
+function humanPrompt(){
+  const base = ($("rewritePrompt").value || "").trim() || buildHumanPrompt($("rewritePreset").value);
+  return base + (mdKeep ? MD_KEEP_CLAUSE : MD_PLAIN_CLAUSE);
+}
 
 function apiCfg(){
   let s = {};
@@ -2213,7 +2308,7 @@ async function runRewrite(){
   if (!cfg.key){ stats.innerHTML = '<div class="note warn">Chưa có API key. Nhập key ở trên rồi chạy lại.</div>'; return; }
   if (text.length > 20000){ stats.innerHTML = noteBox("Văn bản dài hơn 20.000 ký tự — cắt bớt trước khi gửi."); return; }
   if ($("apiRemember").checked) localStorage.setItem(API_STORE, JSON.stringify(cfg));
-  const prompt = ($("rewritePrompt").value || "").trim() || buildHumanPrompt($("rewritePreset").value);
+  const prompt = humanPrompt();
   const twoPass = $("optTwoPass").checked;
   switchTab("rewrite");
   stats.innerHTML = '<div class="empty">Đang gọi ' + esc(cfg.provider === "google" ? "Gemini" : "API") + " · " + esc(cfg.model) + " …</div>";
@@ -2681,6 +2776,7 @@ async function computeEla(u8, mime){
     c.width = W; c.height = H;
     const ctx = c.getContext("2d", {willReadFrequently:true});
     ctx.drawImage(bmp, 0, 0, W, H);
+    if (bmp.close) bmp.close();          /* giải phóng bitmap đã decode ngay */
     const a = ctx.getImageData(0, 0, W, H).data;
     const url = c.toDataURL("image/jpeg", 0.92);
     const img = await new Promise((res, rej) => {
@@ -2698,7 +2794,9 @@ async function computeEla(u8, mime){
       out.data[p*4] = v; out.data[p*4+1] = v; out.data[p*4+2] = v; out.data[p*4+3] = 255;
     }
     ctx.putImageData(out, 0, 0);
-    return {mean: sum / (W*H), max, url: c.toDataURL("image/png"), w: W, h: H};
+    const elaUrl = c.toDataURL("image/png");
+    c.width = 0; c.height = 0;          /* trả backing store của canvas */
+    return {mean: sum / (W*H), max, url: elaUrl, w: W, h: H};
   } catch(e){ return null; }
 }
 
@@ -3005,6 +3103,8 @@ async function handleFiles(list){
     try { fileResults.push(await analyzeOne(f)); }
     catch (e){ fileResults.push({name:f.name, size:f.size, kind:"—", fields:[], findings:[], notes:[], cmds:[], error:e.message}); }
   }
+  /* giữ tối đa 8 file: mỗi ảnh còn giữ ảnh ELA base64, tích nhiều là phình RAM */
+  while (fileResults.length > 8) fileResults.shift();
   activeFile = fileResults.length - 1;
   renderFileList();
   showFile(activeFile);
@@ -3147,6 +3247,7 @@ src.addEventListener("drop", async e => {
 const TABS = ["scan","clean","score","rewrite","prompt","ref"];
 const LTABS = ["text","file"];
 function switchLeft(name){
+  if (zoomBoxEl) closeBox();
   document.querySelectorAll(".ltabs button").forEach(x => x.classList.toggle("on", x.dataset.ltab === name));
   LTABS.forEach(t => $("ltab-" + t).classList.toggle("hidden", t !== name));
 }
@@ -3175,6 +3276,7 @@ $("btnPrompt").addEventListener("click", () => { renderPrompt(false); switchTab(
 $("btnPromptStrict").addEventListener("click", () => { renderPrompt(true); });
 
 function switchTab(name){
+  if (zoomBoxEl) closeBox();
   document.querySelectorAll(".tabs button[data-tab]").forEach(x => x.classList.toggle("on", x.dataset.tab === name));
   TABS.forEach(t => $("tab-" + t).classList.toggle("hidden", t !== name));
 }
@@ -3185,6 +3287,23 @@ let chainOrder = localStorage.getItem("traceChainOrder") === "clean-first" ? "cl
 function renderOrder(){
   $("orderLabel").textContent = chainOrder === "human-first" ? "Humanize → Làm sạch" : "Làm sạch → Humanize";
 }
+
+/* nút Markdown: quyết định cleaner + prompt có giữ định dạng hay không */
+function paintMd(){
+  const b = $("btnMd");
+  if (!b) return;
+  b.textContent = mdKeep ? "Markdown: giữ" : "Markdown: xoá";
+  b.setAttribute("aria-pressed", mdKeep ? "true" : "false");
+  b.style.color = mdKeep ? "var(--accent)" : "";
+  b.style.borderColor = mdKeep ? "rgba(94,234,212,.45)" : "";
+}
+$("btnMd").addEventListener("click", () => {
+  mdKeep = !mdKeep;
+  try { localStorage.setItem("traceMdKeep", mdKeep ? "1" : "0"); } catch {}
+  paintMd();
+  toast(mdKeep ? "Markdown: giữ nguyên định dạng" : "Markdown: xoá hết định dạng + căn lại");
+});
+paintMd();
 
 $("btnSwapOrder").addEventListener("click", () => {
   chainOrder = chainOrder === "human-first" ? "clean-first" : "human-first";
@@ -3213,7 +3332,7 @@ async function runChain(){
   try {
     for (const step of order){
       if (step === "human"){
-        const p = ($("rewritePrompt").value || "").trim() || buildHumanPrompt($("rewritePreset").value);
+        const p = humanPrompt();
         cur = await callLLM(cur, apiCfg(), p, null);
         log.push(`humanize ${Math.round(scoreText(cur).total)}%`);
       } else {
@@ -3309,24 +3428,60 @@ $("btnDemo").addEventListener("click", () => {
   switchTab("scan");
 });
 
-/* ── chuyển view: Công cụ / Guide ── */
-document.querySelectorAll(".switch button").forEach(b => {
-  b.addEventListener("click", () => {
-    document.querySelectorAll(".switch button").forEach(x => x.classList.toggle("on", x === b));
-    const g = b.dataset.view === "guide";
-    $("view-tool").classList.toggle("hidden", g);
-    $("view-guide").classList.toggle("hidden", !g);
-    if (g) guideSpy();
-  });
-});
+/* ── chuyển view: Công cụ / Guide ──
+   Guide ~2.500 node: chỉ dựng DOM khi mở tab, rời tab là bỏ hết để trả bộ nhớ. */
+const guideView = $("view-guide");
+let guideMounted = false, guideScrollTop = 0, guideQuery = "", guideTimer = null;
 
-$("guideSearch").addEventListener("input", () => {
-  const q = $("guideSearch").value.trim().toLowerCase();
+function applyGuideFilter(q){
   document.querySelectorAll("#guideBody section").forEach(s => {
     s.style.display = (!q || s.textContent.toLowerCase().includes(q)) ? "" : "none";
   });
   document.querySelectorAll("#guideToc a").forEach(a => {
     a.style.display = (!q || a.textContent.toLowerCase().includes(q)) ? "" : "none";
+  });
+}
+
+function mountGuide(){
+  if (guideMounted) return;
+  const tpl = $("guideTpl");
+  if (!tpl) return;
+  guideView.appendChild(tpl.content.cloneNode(true));
+  guideMounted = true;
+  const search = $("guideSearch"), body = $("guideBody");
+  if (search){
+    search.value = guideQuery;
+    search.addEventListener("input", () => {
+      clearTimeout(guideTimer);
+      guideTimer = setTimeout(() => {
+        guideQuery = search.value.trim().toLowerCase();
+        applyGuideFilter(guideQuery);
+      }, 140);
+    });
+    if (guideQuery) applyGuideFilter(guideQuery);
+  }
+  if (body) body.addEventListener("scroll", guideSpy, {passive:true});
+  requestAnimationFrame(() => {
+    if (body && guideScrollTop) body.scrollTop = guideScrollTop;
+    guideSpy();
+  });
+}
+
+function unmountGuide(){
+  if (!guideMounted) return;
+  const body = $("guideBody");
+  if (body) guideScrollTop = body.scrollTop;
+  [...guideView.children].forEach(n => { if (n.tagName !== "TEMPLATE") n.remove(); });
+  guideMounted = false;
+}
+
+document.querySelectorAll(".switch button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".switch button").forEach(x => x.classList.toggle("on", x === b));
+    const g = b.dataset.view === "guide";
+    $("view-tool").classList.toggle("hidden", g);
+    guideView.classList.toggle("hidden", !g);
+    if (g){ mountGuide(); guideSpy(); } else unmountGuide();
   });
 });
 
@@ -3344,7 +3499,81 @@ function guideSpy(){
     a.classList.toggle("on", a.getAttribute("href") === "#" + slug);
   });
 }
-$("guideBody").addEventListener("scroll", guideSpy, {passive:true});
+/* listener scroll của guide gắn lúc mount — xem mountGuide() */
+
+/* ── nút phóng to ô text: bấm để mở rộng, kéo góc để đổi kích thước, Esc để thu nhỏ ── */
+const BOX_SIZE_KEY = "traceBoxSize";
+let zoomBoxEl = null;
+
+function readBoxSizes(){
+  try { return JSON.parse(localStorage.getItem(BOX_SIZE_KEY) || "{}") || {}; } catch { return {}; }
+}
+
+function zoomBarEl(){
+  let bar = $("zoomBar");
+  if (bar) return bar;
+  bar = document.createElement("div");
+  bar.id = "zoomBar";
+  bar.hidden = true;
+  bar.innerHTML = '<span id="zoomLabel"></span><button type="button" id="zoomClose">⤡ Thu nhỏ</button>';
+  document.body.appendChild(bar);
+  $("zoomClose").addEventListener("click", closeBox);
+  return bar;
+}
+
+function closeBox(){
+  if (!zoomBoxEl) return;
+  const el = zoomBoxEl;
+  zoomBoxEl = null;
+  if (el.id && el.style.width){
+    const all = readBoxSizes();
+    all[el.id] = { w: el.style.width, h: el.style.height };
+    try { localStorage.setItem(BOX_SIZE_KEY, JSON.stringify(all)); } catch {}
+  }
+  el.classList.remove("tbzoom");
+  el.style.width = ""; el.style.height = "";
+  if (el._tbwrap) el._tbwrap.classList.remove("zoomed");
+  const bar = $("zoomBar");
+  if (bar) bar.hidden = true;
+  el.focus();
+}
+
+function openBox(el, label){
+  if (zoomBoxEl) closeBox();
+  zoomBoxEl = el;
+  if (el._tbwrap) el._tbwrap.classList.add("zoomed");
+  el.classList.add("tbzoom");
+  const s = readBoxSizes()[el.id];
+  if (s && s.w && s.h){ el.style.width = s.w; el.style.height = s.h; }
+  const bar = zoomBarEl();
+  $("zoomLabel").textContent = label + " · kéo góc dưới–phải để đổi kích thước";
+  bar.hidden = false;
+  el.focus();
+}
+
+function enhanceBox(el, label){
+  if (!el || el._tbwrap) return;
+  const wrap = document.createElement("div");
+  wrap.className = "tbwrap";
+  el.parentNode.insertBefore(wrap, el);
+  wrap.appendChild(el);
+  el._tbwrap = wrap;
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "expbtn";
+  b.textContent = "⤢";
+  b.title = "Mở rộng ô · kéo góc để đổi kích thước · Esc để thu nhỏ";
+  b.setAttribute("aria-label", "Mở rộng ô " + label);
+  b.addEventListener("click", () => el.classList.contains("tbzoom") ? closeBox() : openBox(el, label));
+  wrap.appendChild(b);
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && zoomBoxEl) closeBox();
+});
+
+enhanceBox(src, "Văn bản gốc");
+enhanceBox($("rewritePrompt"), "Prompt humanize");
 
 /* init */
 updateInputStats();
