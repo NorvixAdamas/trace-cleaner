@@ -1,6 +1,7 @@
-# Trace Cleaner 2.0 — Báo cáo triển khai
+# Trace Cleaner 2.1 — Báo cáo triển khai
 
-Ngày: 2026-11-20. Báo cáo này chỉ ghi việc **đã làm và đã kiểm tra**; phần chưa làm nằm ở mục H.
+Ngày: 2026-11-20. Baseline: `5fb0721`. Báo cáo chỉ ghi việc **đã làm và đã kiểm tra**;
+phần chưa làm nằm ở mục H. Không commit, không push (theo yêu cầu).
 
 ---
 
@@ -8,26 +9,19 @@ Ngày: 2026-11-20. Báo cáo này chỉ ghi việc **đã làm và đã kiểm t
 
 | Mục | Giá trị |
 |---|---|
-| Commit bắt đầu | `b11d616` |
-| HEAD hiện tại | `b11d616` — **thay đổi chưa commit** (theo yêu cầu không tự push/commit) |
-| Nhánh | `main` |
-| `git status` | 8 file sửa, 7 nhóm file mới chưa track |
+| HEAD bắt đầu | `5fb0721a7650ea9bd1f1b250da6924309d69b034` |
+| HEAD cuối | `5fb0721` — **không tạo commit mới** |
+| Nhánh | `main` (không đổi) |
+| `git status` | 9 file sửa, 7 mục mới chưa track (liệt kê dưới) |
+| Commit/push | **không** |
 
-**Sửa:**
+**Sửa:** `index.html`, `extension/{background,content,panel,sidebar}.js`, `extension/panel.html`,
+`extension/manifest.json`, `tools/check_extension.js`, `package.json`, `.github/workflows/ci.yml`.
 
-- `index.html`
-- `extension/background.js`, `content.js`, `manifest.json`, `panel.js`, `sidebar.js`
-- `tools/trace_scan.py`, `tools/build_guide.py`
-
-**Thêm:**
-
-- `package.json`, `.github/workflows/ci.yml`
-- `packages/core/{unicode,entities,preservation,diff,document,markdown,index}.js`
-- `tests/{unicode,preservation,diff,markdown,parity,core-sync,web-inline}.test.js`
-- `tools/{sync_core.py,check_extension.js}`
-- `extension/core/{entities,preservation}.js` (sinh tự động, có kiểm tra khớp)
-- `docs/{AUDIT,ARCHITECTURE,API,PRIVACY,SECURITY,TESTING,ROADMAP,TRACE_CLEANER_2_FINAL_REPORT}.md`
-- `README.md`
+**Thêm:** `packages/core/cleaning.js`, `packages/writing/prompts.js`,
+`extension/core/{bundle,prompts}.js` (sinh tự động), `tools/sync_assets.js`,
+`tests/{cleaning,extension-sidebar,writing-prompts,assets-sync}.test.js`,
+`docs/UNIFIED_BASELINE.md`.
 
 **Xoá:** không.
 
@@ -35,130 +29,125 @@ Ngày: 2026-11-20. Báo cáo này chỉ ghi việc **đã làm và đã kiểm t
 
 ## B. Kiến trúc
 
-- **Nguồn logic mới:** `packages/core/` — ESM thuần, không dependency, chạy Node và trình duyệt.
-  Gồm Unicode, trích xuất thực thể, kiểm tra bảo toàn, diff, mô hình tài liệu, tách Markdown.
-- **Web:** vẫn là một file chạy offline. Hàm `preservationCheck` được nhúng trong `index.html` và
-  **được test bằng cách trích xuất chính khối mã đó** (`tests/web-inline.test.js`).
-- **Extension:** service worker chuyển sang ES module, import `extension/core/preservation.js`
-  (bản sao tự động của core). Background trả `{ text, preservation }` thay vì text thô.
-- **CLI:** bảng phân loại được đồng bộ với core; thêm audit từng ký tự; giữ emoji cờ.
-- **Tài liệu:** audit, kiến trúc, API, bảo mật, privacy, testing, roadmap.
+- **Canonical core:** `packages/core/` là nguồn duy nhất cho Unicode, thực thể, bảo toàn, diff,
+  tài liệu, Markdown **và làm sạch** (`cleaning.js` mới).
+- **Prompt canonical:** `packages/writing/prompts.js` — `PROMPT_BASE`, 9 chế độ, mệnh đề Markdown,
+  `SELF_EDIT`, `buildPrompt()`. Không còn prompt thứ hai.
+- **Extension:** `sidebar.js` trở thành UI adapter; mọi phép làm sạch đi qua `TraceCore.cleanText`
+  trong `extension/core/bundle.js` (bundle classic-script sinh từ `packages/core`).
+  `background.js` import prompt từ `extension/core/prompts.js`.
+- **Web:** prompt lấy từ khối `@generated:prompts` trong `index.html` (sinh từ registry).
+  Cleaner và `preservationCheck` của web **vẫn là bản nhúng** — chưa migrate (xem H).
+- **Artifact sinh tự động:** `tools/sync_assets.js` sinh bundle extension, bản copy prompt và
+  khối prompt trong `index.html`; `--check` fail khi lệch. `tools/sync_core.py` vẫn phụ trách
+  `entities.js`/`preservation.js` cho service worker.
+- **CLI:** không đổi trong 2.1; vẫn là bảng Python tương đương + parity test.
 
-Luồng dữ liệu và quyết định thiết kế: `docs/ARCHITECTURE.md`.
-
----
-
-## C. Chức năng
-
-### Đã xong và đã kiểm tra
-
-1. **Bảo toàn dữ kiện sau viết lại** (web + extension): số (multiset), chiều `from…to`, URL, email,
-   ngày, trích dẫn, phủ định, điều kiện, mục liệt kê, cấu trúc Markdown, độ dài.
-2. **Cleaner không còn xoá mục giữa bộ ba.** `Kotlin, Java, and Python` → `Kotlin, Java and Python`.
-3. **Không còn đảo nghĩa "not just".** `is not just` → `isn't just` (giữ phủ định).
-4. **URL, inline code, code fence, emoji cờ, ZWJ được bảo vệ** trong cleaner web.
-5. **Undo chuỗi Humanize** (`↩ Bản trước`) và **khôi phục bản gốc trước khi viết lại**.
-6. **Audit Unicode** ở core và Python CLI (vị trí, codepoint, hành động, lý do).
-7. **Parity JS ↔ Python** được test trên cùng fixture.
-8. **Manifest extension hẹp hơn**: bỏ host permission cho mọi URL.
-9. **Test suite 44 test** + 4 lệnh kiểm tra tĩnh.
-10. **Guide tái tạo được**: `build_guide.py --check`.
-
-### Một phần
-
-- **Diff & mô hình tài liệu** có API + test (`diffWords`, `DocumentSession`) nhưng **chưa có UI**
-  hiển thị diff hay accept từng thay đổi.
-- **Kiểm tra bảo toàn** là heuristic deterministic; `semanticReview` luôn `not_checked`.
-- **Extension**: đã sửa mã và kiểm tra tĩnh, **chưa chạy trong Chrome thật**.
-- **README/LICENSE**: README có; license chưa chọn.
-
-### Chưa làm
-
-- Grammar/spelling/punctuation engine; 7 chế độ viết lại; voice profile; nhiều phương án cho một câu.
-- Hợp nhất `cleanText`/`clean` vào `packages/core`.
-- Timeout request, key "chỉ phiên", nút xoá key.
-- Giới hạn tài nguyên khi parse file; C2PA/signature verification.
-- E2E, accessibility audit, benchmark chất lượng viết.
+Chi tiết: `docs/ARCHITECTURE.md`, baseline: `docs/UNIFIED_BASELINE.md`.
 
 ---
 
-## D. Sửa lỗi
+## C. Lỗi đã sửa
 
-| # | Vấn đề | Nguyên nhân gốc | File | Sửa | Test |
+| # | Hành vi gốc | Nguyên nhân | File/hàm | Sửa | Test | Kết quả |
+|---|---|---|---|---|---|---|
+| 1 | `Kotlin, Java, and Python` → `Kotlin and Java` | callback `TRICOLON`/`TRICOLON2` bỏ capture thứ ba | `extension/sidebar.js` | xoá toàn bộ quy tắc tricolon; cleaner dùng core | `extension-sidebar.test.js` (5 danh sách) | pass |
+| 2 | `It is not just a tool, it is a platform.` → `a tool` | `FRAME2` trả `a` | `extension/sidebar.js` | xoá `FRAME1`/`FRAME2`; chỉ làm sạch ký tự | `extension-sidebar.test.js` (5 câu EN/VI) | pass |
+| 3 | `👨‍👩‍👧` → mất ZWJ; `می‌خواهم` hỏng | `INVIS` phủ `U+200B–U+200D` | `extension/sidebar.js` | xoá regex; core phân loại joiner/VS riêng và giữ mặc định | `extension-sidebar.test.js`, `cleaning.test.js` | pass |
+| 4 | Prompt dặn model xoá tricolon, bullet, phủ định | prompt cũ trong `background.js`, `index.html` | `background.js`, `index.html` | thay bằng registry bảo toàn-trước; web sinh từ cùng nguồn | `writing-prompts.test.js` | pass |
+| 5 | `buildPrompt()` (prompt tiếng Việt) dặn xoá tricolon/bullet/heading | viết cho mục tiêu "né detector" | `index.html` | đổi thành "giữ đủ mục / giữ cấu trúc / không đảo phủ định" | `writing-prompts.test.js` (quét `index.html`) | pass |
+| 6 | Làm sạch cạnh URL ăn mất khoảng trắng (`seehttps://…`) | tidy cắt `[ \t]+$` trên từng đoạn chữ | `packages/core/cleaning.js` | `cleanProseStrict` giữ khoảng trắng biên | `cleaning.test.js` | pass |
+| 7 | Request model có thể treo vô hạn | không timeout/abort | `extension/background.js` | `AbortController` 60s + `withTimeout` | kiểm tra cú pháp + review mã | chưa E2E |
+| 8 | Lỗi provider không có mã ổn định | ném chuỗi tự do | `extension/background.js` | `PROVIDER_AUTH_ERROR`, `_RATE_LIMIT`, `_TIMEOUT`, `_UNAVAILABLE`, `_EMPTY_RESPONSE`, `NETWORK_ERROR`, `CANCELLED` | review mã | chưa có test provider |
+| 9 | `test:core` trỏ tới `tests/document.test.js` không tồn tại | script cũ | `package.json` | bỏ file không tồn tại, thêm `cleaning.test.js` | `npm test` | pass |
+| 10 | CI không kiểm tra artifact sinh tự động | thiếu bước | `.github/workflows/ci.yml` | thêm `node tools/sync_assets.js --check` | chạy local exit 0 | pass (chưa đẩy lên) |
+
+---
+
+## D. Parity giữa các bề mặt
+
+| Tính năng | Web | Extension | Python | Hợp đồng chung | Đã kiểm chứng |
 |---|---|---|---|---|---|
-| 1 | Mất mục giữa bộ ba (P0) | Regex tricolon trả `${a} ${conj} ${c}`, bỏ `b` | `index.html` | Giữ đủ mục, chỉ bỏ dấu phẩy Oxford | `preservation.test.js`, `web-inline.test.js`, Chromium |
-| 2 | "not just X" → "X" (P0) | `FRAME_FIX` thay `(is|are) not just` bằng `$1` | `index.html` | Bỏ quy tắc đó | Chromium: `isn't just` |
-| 3 | Chuỗi ghi đè văn bản gốc (P1) | `runChain` gán `src.value = cur` không lưu bản cũ | `index.html` | Lưu + nút `↩ Bản trước` | kiểm tra mã/UI (chưa E2E) |
-| 4 | URL/code bị regex cấu trúc sửa (P1) | Bảo vệ URL đặt **sau** bước cấu trúc; code không được bảo vệ | `index.html` | Placeholder cho URL, code, cờ trước bước cấu trúc | Chromium |
-| 5 | Emoji cờ bị phá (P1) | Mọi `tag` bị xoá | `index.html`, `trace_scan.py` | Nhận diện `U+1F3F4` + tag, giữ nguyên | `unicode.test.js`, `parity.test.js`, Chromium |
-| 6 | Python thiếu audit, thiếu LRM/RLM/ALM | Bảng cũ, chỉ trả count | `trace_scan.py` | Thêm codepoint + `audit[]` + `--audit` | `parity.test.js` |
-| 7 | Extension xin quyền mọi URL (P1) | `host_permissions` quá rộng | `extension/manifest.json` | Chỉ 3 domain API | `check_extension.js` |
-| 8 | Extension tin output model (P1) | Không kiểm tra sau khi gọi | `background.js`, `content.js`, `panel.js`, `sidebar.js` | `checkPreservation` + hộp cảnh báo + revert | `core-sync.test.js`, kiểm tra tĩnh |
-| 9 | Build guide không kiểm tra được | Không có `--check` | `build_guide.py` | Thêm chế độ check, exit 1 khi lệch | chạy thật: exit 0 |
-| 10 | Nút Copy Markdown gắn nhầm listener | `id="btnMd"` trùng ở thanh chuỗi và báo cáo file | `index.html` | Đổi thành `btnCopyMd` | kiểm tra id trùng: 0 |
+| Làm sạch Unicode | bản nhúng `cleanText` | `TraceCore.cleanText` (core) | `clean_text()` | `packages/core/unicode.js` | Extension ↔ core: **có test**; Python ↔ JS: **parity test**; Web ↔ core: **KHÔNG** |
+| Bảo toàn dữ kiện | `preservationCheck` nhúng | `core/preservation.js` | — | `packages/core/preservation.js` | Extension: import trực tiếp; Web: **chưa** dùng core |
+| Prompt viết lại | khối sinh tự động | `core/prompts.js` | — | `packages/writing/prompts.js` | **có test** (`writing-prompts.test.js`, `assets-sync.test.js`) |
+| Chế độ viết lại | 4 preset UI | 9 chế độ (select) | — | `MODES` | registry **có test**; UI mới chỉ kiểm tra tĩnh |
+| Mã lỗi provider | chuỗi tiếng Việt | mã `PROVIDER_*` | — | `background.js` | **chưa** thống nhất với web |
+| Artifact sinh tự động | prompt block | bundle + prompts | — | `sync_assets.js` / `sync_core.py` | **có test drift** |
+| Diff | không có UI | không có UI | — | `packages/core/diff.js` | core **có test** |
+
+Ghi chú thẳng: web **chưa** dùng canonical core cho cleaner/bảo toàn. Đây là khoảng trống lớn nhất
+còn lại của mục tiêu "one source of truth".
 
 ---
 
-## E. Testing
+## E. Kiểm thử
 
-Đã chạy (2026-11-20):
+Đã chạy (2026-11-20, Node v26.13.0, Python 3.11.9):
 
 | Lệnh | Kết quả |
 |---|---|
-| `node --test tests/*.test.js` | **44 pass / 0 fail / 0 skip** (~0,4 s) |
-| `python tools/build_guide.py --check` | exit 0, guide khớp |
-| `node tools/check_extension.js` | exit 0, manifest v1.4.0, 4 permission |
-| `python tools/sync_core.py --check` | exit 0, bản sao khớp |
-| `python -c "ast.parse(...)"` | `trace_scan.py` hợp lệ |
-| `node -e "new Function(<script>)"` | script web hợp lệ cú pháp |
-| Chromium + `cleanText` | 5/5 kịch bản đúng, console 0 lỗi |
+| `node --test tests/*.test.js` | **73 pass / 0 fail / 0 skip** (~1,0 s) |
+| `node tools/sync_assets.js --check` | exit 0 — `artifact khớp nguồn` |
+| `python tools/sync_core.py --check` | exit 0 — `extension/core khớp packages/core` |
+| `node tools/check_extension.js` | exit 0 — `manifest OK · v2.1.0 · 4 permission` (1 warning `<all_urls>`) |
+| `python tools/build_guide.py --check` | exit 0 — guide khớp |
+| `node --check` cho 7 file JS đã sửa/mới | exit 0 |
+| `new Function(<script trong index.html>)` | hợp lệ cú pháp |
+| Chromium, `http://127.0.0.1:8791/index.html` | trang chạy, `PROMPT_VERSION=2.1.0`, `P_BASE` không còn chỉ dẫn xoá, 4 preset, `cleanText` giữ tricolon/URL, `preservationCheck` bắt `list_item_removed`, 0 lỗi console |
 
-Chi tiết từng test: `docs/TESTING.md`.
+Phân bố test: `cleaning` 10, `unicode` 10, `markdown` 10, `preservation` 11, `extension-sidebar` 7,
+`writing-prompts` 7, `diff` 6, `assets-sync` 5, `web-inline` 4, `parity` 2, `core-sync` 1.
 
-**Không chạy:** extension trong Chrome thật; gọi API thật; E2E; fixture file forensics; đo hiệu
-năng; accessibility. Không có kết quả nào ở trên đại diện cho những phần này.
+**Không chạy / không có kết quả:** extension trong Chrome thật (chỉ kiểm tra tĩnh + test trong vm);
+gọi API thật; E2E; fixture docx/pptx/xlsx/pdf; đo hiệu năng; accessibility; xác minh C2PA.
 
 ---
 
-## F. Bảo mật
+## F. Bảo mật và privacy
 
-- **Quyền extension:** còn `storage`, `activeTab`, `scripting`, `sidePanel`; host chỉ
-  `generativelanguage.googleapis.com`, `api.openai.com`, `openrouter.ai`.
-  Content script vẫn `<all_urls>` (cần cho sidebar nổi) — ghi rõ trong `docs/SECURITY.md`.
-- **Key:** vẫn lưu plaintext trong `localStorage`/`chrome.storage.local` khi người dùng chọn lưu;
-  không phải két mã hoá, đã ghi rõ. Chưa có nút xoá riêng.
-- **Output model:** luôn coi là không tin cậy; render bằng `textContent`, escape khi nội suy HTML;
-  chạy kiểm tra bảo toàn trước khi hiển thị.
-- **File parser:** **chưa** xác nhận có giới hạn kích thước/giải nén/XML; rủi ro mở. Không tuyên bố
-  an toàn với file độc hại.
-- **Bí mật trong repo:** không có; `.gitignore` chặn log/temp.
-- **C2PA/chữ ký:** chưa xác minh; không kết luận hợp lệ.
+- **Quyền extension:** `storage`, `activeTab`, `scripting`, `sidePanel`; host permission chỉ 3 domain
+  API. `content_scripts.matches` **vẫn `<all_urls>`** — cần cho sidebar nổi + phím tắt; đã ghi rõ
+  trong `docs/SECURITY.md`, không tuyên bố "đã thu hẹp hoàn toàn".
+- **Key:** vẫn plaintext trong `chrome.storage.local` / `localStorage` khi người dùng chọn lưu;
+  chưa có nút xoá riêng, chưa có chế độ "chỉ phiên".
+- **Request:** thêm timeout 60s + `AbortController`; lỗi 401/403/429/404/5xx được map sang mã,
+  message cắt còn 180 ký tự; không log key.
+- **Prompt:** một registry duy nhất, không còn chỉ dẫn xoá nội dung; prompt tự soạn vẫn bị ép kèm
+  mệnh đề Markdown/nội dung từ registry.
+- **Bảo toàn:** mọi phản hồi model vẫn qua `checkPreservation`; lỗi không bị ẩn.
+- **File parser:** **không thay đổi** trong 2.1 — chưa có giới hạn giải nén/XML (rủi ro mở).
+- **Provenance:** không có thay đổi nào xoá metadata C2PA; công cụ vẫn chỉ đọc dấu hiệu, không xác minh.
 
 ---
 
 ## G. Hiệu năng
 
-Không thực hiện phép đo mới trong phiên này. Không có tuyên bố tăng/giảm RAM, tốc độ hay kích
-thước bundle. Thay đổi hiệu năng duy nhất là gián tiếp: kiểm tra bảo toàn chạy bằng regex trên
-văn bản đã có trong bộ nhớ, không gọi mạng, nhưng chưa đo chi phí trên văn bản rất dài.
+Không đo trong phiên này. Không có tuyên bố nhanh/chậm hơn. Thay đổi có ảnh hưởng tiềm năng:
+bundle core trong extension lớn hơn sidebar cũ (bundle ~1.4k dòng), và `cleanText` chạy qua
+`segmentText` trước khi phân loại codepoint. Chưa benchmark; xem mục H.
 
 ---
 
-## H. Việc còn lại
+## H. Việc chưa làm
 
 | Ưu tiên | Việc | Ghi chú |
 |---|---|---|
-| P0 | Chạy extension trong Chrome thật + gọi API thật | xác nhận luồng end-to-end, kể cả cảnh báo bảo toàn |
-| P1 | Timeout + huỷ request extension | tránh treo UI |
-| P1 | Giới hạn kích thước/giải nén/thời gian parse file; harden XML | rủi ro bảo mật mở |
-| P1 | UI diff + accept/reject từng thay đổi trên `DocumentSession` | hiện chỉ accept toàn bộ |
-| P2 | Hợp nhất cleaner web/extension vào `packages/core` | cần test hồi quy rộng |
-| P2 | Markdown parser chuẩn, giữ định dạng khi viết lại | hiện là regex |
-| P2 | 7 chế độ viết lại, voice profile, structured output | phần lớn của "2.0" |
-| P2 | Grammar/spelling/punctuation engine en/vi | chưa có |
-| P2 | Key "chỉ phiên" + nút xoá key | |
-| P3 | Chọn LICENSE, release notes | |
-| P3 | CI chạy thật trên GitHub | workflow đã có, chưa push |
-| P3 | Accessibility audit, benchmark chất lượng viết | |
+| P0 | Web dùng canonical core cho `cleanText` + `preservationCheck` | hiện vẫn là bản nhúng; cần nhúng bundle vào `index.html` + đổi `web-inline.test.js` sang test adapter |
+| P0 | Chạy extension trong Chrome thật + gọi API thật | chưa ai xác nhận E2E trong phiên này |
+| P1 | Test cho timeout/mã lỗi provider | mã đã có, chưa có test tự động (cần mock fetch) |
+| P1 | Giới hạn tài nguyên parse file + harden XML | rủi ro bảo mật mở, không đổi trong 2.1 |
+| P1 | UI diff + accept/reject từng thay đổi trên `DocumentSession` | core có API + test, UI chưa nối |
+| P2 | Grammar/spelling/punctuation engine en/vi | chưa có; không được quảng cáo |
+| P2 | Thống nhất mã lỗi web ↔ extension | web vẫn hiện chuỗi lỗi thô |
+| P2 | Thu hẹp `<all_urls>` bằng `activeTab` + optional host | cần thử nghiệm Chrome thật trước |
+| P3 | LICENSE, benchmark, accessibility, C2PA verification | |
 
-Không có blocker kỹ thuật nào ngoài việc cần key API và Chrome thật để kiểm chứng end-to-end.
+---
+
+## I. Mốc tiếp theo đề xuất
+
+**Nhúng bundle core vào `index.html` và chuyển `cleanText` + `preservationCheck` của web sang
+`TraceCore`**, cập nhật `tests/web-inline.test.js` để test adapter thay vì bản sao. Đây là mốc
+duy nhất còn lại để tuyên bố "một nguồn sự thật" cho cả ba bề mặt, và nó đo được bằng test drift
+đã có sẵn.

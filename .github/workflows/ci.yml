@@ -20,6 +20,8 @@ jobs:
         run: node --test tests/*.test.js
       - name: Guide reproducible
         run: python tools/build_guide.py --check
+      - name: Generated artifacts in sync
+        run: node tools/sync_assets.js --check
       - name: Extension manifest
         run: node tools/check_extension.js
       - name: extension/core in sync

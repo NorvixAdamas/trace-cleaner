@@ -1,81 +1,80 @@
 # Roadmap
 
-Trạng thái tính đến 2026-11-20. "Xong" nghĩa là có mã + test (hoặc kiểm tra ghi rõ trong
-`docs/TESTING.md`); không có nghĩa là đã đạt mọi tiêu chí của bản 2.0.
+Trạng thái 2026-11-20, sau 2.1. "Xong" = có mã + test (hoặc kiểm tra ghi rõ trong
+`docs/TESTING.md`), không phải "đã đạt mọi tiêu chí".
 
-## Phase 0 — Audit & baseline — **xong**
+## 0 — Baseline — xong
 
-- Audit đầy đủ: `docs/AUDIT.md`.
-- Baseline git: `b11d616`; thay đổi của phase này **chưa commit**.
-- 44 test + 3 script kiểm tra.
+- `docs/UNIFIED_BASELINE.md`: HEAD `5fb0721`, ma trận bề mặt, 7 nhóm trùng lặp, 5 lỗi P0 tái hiện được.
 
-## Phase 1 — Toàn vẹn dữ liệu — **một phần**
+## 1 — Toàn vẹn dữ liệu (P0) — xong cho extension, một phần cho web
 
 | Việc | Trạng thái |
 |---|---|
-| Bản gốc không bị ghi đè (web) | xong: `#src` chỉ đổi khi người dùng bấm; nút `↩ Bản gốc trước khi chạy` |
-| Undo chuỗi Humanize | xong: `↩ Bản trước` |
-| Mô hình tài liệu có trạng thái + undo/redo | xong ở `packages/core/document.js` + test; **chưa nối vào UI** |
-| Diff | xong `packages/core/diff.js` + test; **chưa có UI diff** |
-| Kiểm tra bảo toàn | xong web + extension (deterministic) |
-| Sửa lỗi mất dữ liệu (tricolon) | xong |
-| Sửa lỗi đảo nghĩa ("not just") | xong |
-| Bảo vệ URL/code/emoji cờ | xong |
-| Per-change accept/reject | **chưa** (chỉ accept toàn bộ / reject toàn bộ) |
+| Extension không còn xoá mục danh sách | xong — quy tắc tricolon bị xoá, có 5 regression test |
+| Extension không còn đảo phủ định | xong — `FRAME2` bị xoá, 5 test EN/VI |
+| Extension không xoá ZWJ/ZWNJ/VS/cờ | xong — dùng `unicode.clean`, 4 test |
+| Prompt không còn chỉ dẫn xoá nội dung | xong — registry duy nhất, test quét 3 bề mặt |
+| Web cleaner không xoá mục | xong từ 2.0, test `web-inline` |
+| Web dùng core canonical | **chưa** — vẫn bản nhúng |
 
-## Phase 2 — Writing engine — **chưa**
-
-Chưa có grammar/spelling/punctuation engine deterministic. Hiện chỉ có 21 tiêu chí heuristic
-(đếm tell), không phải phân tích ngữ pháp. Cần:
-
-- Rule engine theo ngôn ngữ (en/vi), mỗi gợi ý có vị trí + giải thích + độ tin cậy.
-- Hợp nhất `cleanText` (web) và `clean` (extension) vào `packages/core`.
-- UI review từng gợi ý.
-
-## Phase 3 — Natural rewrite — **một phần**
+## 2 — Core canonical — một phần
 
 | Việc | Trạng thái |
 |---|---|
-| 7 chế độ viết lại | **chưa** (chỉ có 4 preset prompt: general/cover/academic/email) |
-| Kiểm tra bảo toàn sau model | xong |
-| Nhiều phương án cho một câu | **chưa** |
-| Voice profile | **chưa** |
-| Structured JSON output + validate | **chưa** |
-| Trước/sau + accept từng sửa | **chưa** (có hiển thị kết quả + revert) |
+| `packages/core/cleaning.js` | xong, 10 test |
+| `packages/writing/prompts.js` (9 chế độ) | xong, 7 test |
+| Bundle classic-script sinh tự động + `--check` | xong |
+| Extension dùng bundle, sidebar thành UI adapter | xong, 7 test |
+| Web nhúng bundle, bỏ bản sao cleaner/preservation | **chưa** (mốc #1 dưới đây) |
+| Python dùng fixture chung nhiều hơn | một phần (parity 2 test) |
 
-## Phase 4 — Forensics — **một phần**
+## 3 — Cross-surface parity — một phần
 
-- Đọc metadata/ELA hiện có từ trước, **chưa được audit sâu** trong phase này.
-- Giới hạn tài nguyên khi parse file: **chưa** (rủi ro mở, AUDIT F-16).
-- C2PA/chữ ký: **chưa** xác minh; chỉ đọc dấu hiệu.
-- Parser XLSX/PPTX/PDF: hiện tại là đọc thủ công; chưa dùng thư viện chuẩn.
+- extension ↔ core: có test. Python ↔ JS: có parity test. **web ↔ core: chưa có**.
+- Mã lỗi provider: extension có mã, web vẫn hiện chuỗi lỗi → chưa thống nhất.
 
-## Phase 5 — Provider & extension — **một phần**
+## 4 — Document lifecycle & review — chưa nối UI
 
-- Kiểm tra bảo toàn ở background: xong.
-- Thu hẹp host permissions: xong.
-- Timeout/huỷ request: **chưa**.
-- Key "chỉ phiên" + nút xoá: **chưa**.
-- Kiểm thử extension trong Chrome thật: **chưa**.
+- `DocumentSession` + `diff.js` có API và test (10 test markdown/document + 6 diff).
+- Chưa có UI diff, accept/reject từng sửa, revision history trong app.
 
-## Phase 6 — UI/product — **một phần**
+## 5 — Provider — một phần
 
-- Nút Markdown, phóng to ô text, mount/unmount guide, undo chain: xong trước/trong phase này.
-- Writing Studio nhiều mục (Studio/Rewrite/Inspector/Report/History/Settings): **chưa**.
-- Accessibility audit: **chưa**.
+| Việc | Trạng thái |
+|---|---|
+| Timeout 60s + `AbortController` | xong ở extension (chưa có test tự động) |
+| Mã lỗi chuẩn hoá | xong ở extension |
+| Fallback model chỉ khi 404 | xong |
+| Huỷ request từ UI | một phần — `btnStopRewrite` (web) có; extension chưa có nút huỷ |
+| Key "chỉ phiên" + nút xoá | **chưa** |
+| Mã lỗi thống nhất web ↔ extension | **chưa** |
 
-## Phase 7 — Testing & release — **một phần**
+## 6 — Writing intelligence — chưa
 
-- Unit/regression/parity: xong (44 test).
-- CI workflow: có `.github/workflows/ci.yml` nhưng **chưa chạy trên GitHub** (chưa push).
-- E2E, security review chuyên biệt, performance report: **chưa**.
-- LICENSE: **chưa chọn**.
+- Không có grammar/spelling/punctuation engine. Không được quảng cáo là có.
+- 9 chế độ viết lại đã có trong registry + select ở extension; web mới có 4 preset UI.
+- Voice profile, nhiều phương án/câu, structured JSON output: **chưa**.
 
-## Thứ tự đề xuất tiếp theo
+## 7 — Security & forensics — chưa đổi trong 2.1
 
-1. Timeout + huỷ request extension (P1, nhỏ).
-2. Giới hạn tài nguyên parse file + harden XML (P1).
-3. UI diff + accept từng thay đổi trên nền `DocumentSession` + `diff.js` (P1).
-4. Hợp nhất cleaner web/extension vào `packages/core` kèm bộ test hồi quy mở rộng (P2).
-5. Grammar/spelling rule engine en/vi (P2, lớn).
-6. Chọn license + viết release notes (P3).
+- Giới hạn kích thước/giải nén/XML: **chưa** (rủi ro mở).
+- `<all_urls>` content script: **vẫn còn**, có lý do và ghi chú trong SECURITY.
+- C2PA/signature verification: **chưa**.
+
+## 8 — CI/E2E/docs — một phần
+
+- CI có thêm bước `sync_assets.js --check`; chưa chạy trên GitHub vì chưa push.
+- Test: 73 pass local (Node 26). Chrome smoke test: **chưa**.
+- Docs đã cập nhật theo hiện trạng; LICENSE vẫn chưa chọn.
+
+## Thứ tự đề xuất
+
+1. **Web dùng core canonical**: nhúng `extension/core/bundle.js` vào `index.html` qua marker
+   `@generated:core`, đổi `cleanText`/`preservationCheck` thành adapter gọi `TraceCore`, đổi
+   `web-inline.test.js` sang test adapter + bundle thật. Đây là điều kiện để nói "một nguồn sự thật".
+2. Test timeout/mã lỗi provider bằng `fetch` giả trong Node.
+3. Giới hạn tài nguyên parse file + harden XML (P1 bảo mật).
+4. UI diff + accept/reject từng thay đổi trên `DocumentSession`.
+5. Grammar rule engine en/vi (chỉ công bố khi có test cho từng rule).
+6. Chrome smoke test có ghi lại kết quả, rồi mới tính chuyện thu hẹp `<all_urls>`.

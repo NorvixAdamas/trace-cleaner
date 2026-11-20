@@ -253,3 +253,64 @@ Mức độ: **P0** mất dữ liệu/đảo nghĩa, **P1** sai chức năng rõ
 
 Chi tiết kiến trúc đích: `docs/ARCHITECTURE.md`. Kết quả đo: `docs/TESTING.md`.
 Báo cáo cuối: `docs/TRACE_CLEANER_2_FINAL_REPORT.md`.
+
+---
+
+# Phụ lục 2.1 — lỗi phát hiện sau audit 2.0
+
+Các mục dưới đây được xác nhận bằng cách đọc trực tiếp mã tại `5fb0721` và tái hiện trong Node.
+
+## F-22 — P0 — Extension xoá mục thứ ba của danh sách
+
+- **File:** `extension/sidebar.js` (`TRICOLON`, `TRICOLON2`).
+- **Tái hiện:** `sidebar.clean("Kotlin, Java, and Python")` → `"Kotlin and Java"`.
+- **Nguyên nhân:** callback chỉ dùng capture 1 và 2; capture 3 bị bỏ.
+- **Sửa:** xoá hai quy tắc; làm sạch đi qua `TraceCore.cleanText`.
+- **Test:** `tests/extension-sidebar.test.js` (5 danh sách), `tests/cleaning.test.js`.
+
+## F-23 — P0 — Extension đảo nghĩa phủ định
+
+- **File:** `extension/sidebar.js` (`FRAME2`).
+- **Tái hiện:** `"It is not just a tool, it is a platform."` → `"a tool"`.
+- **Sửa:** xoá `FRAME1`/`FRAME2`; không còn phép "sửa câu" nào trong extension.
+- **Test:** 5 câu EN/VI trong `tests/extension-sidebar.test.js`.
+
+## F-24 — P0 — Extension xoá ZWJ/ZWNJ và variation selector
+
+- **File:** `extension/sidebar.js` (`INVIS = /[​-‍...]/g`).
+- **Tái hiện:** `"👨‍👩‍👧"` → mất ZWJ; `"می‌خواهم"` hỏng.
+- **Sửa:** core phân loại `joiner`/`vs` riêng và giữ mặc định; extension không còn bảng regex riêng.
+- **Test:** `extension-sidebar.test.js`, `cleaning.test.js`, `unicode.test.js`.
+
+## F-25 — P0 — Prompt extension dặn model xoá nội dung
+
+- **File:** `extension/background.js` (`PROMPT`, mục "Delete on sight").
+- **Sửa:** `packages/writing/prompts.js` là nguồn duy nhất; `background.js` import
+  `extension/core/prompts.js` (sinh tự động). Prompt mới đặt bảo toàn lên đầu.
+- **Test:** `tests/writing-prompts.test.js` (quét prompt nguồn, extension, `index.html`).
+
+## F-26 — P0 — Web cũng dặn xoá tricolon/bullet/heading
+
+- **File:** `index.html` (`P_BASE`, `SELF_EDIT`, `buildPrompt()`).
+- **Sửa:** `P_BASE`/`SELF_EDIT`/MD clauses sinh từ registry; ba câu lệnh trong `buildPrompt()` đổi
+  thành "giữ đủ mục", "giữ cấu trúc", "không đảo phủ định".
+- **Test:** `tests/writing-prompts.test.js`, `tests/assets-sync.test.js` (chống lệch).
+
+## F-27 — P1 — Làm sạch ăn mất khoảng trắng cạnh URL/code
+
+- **File:** `packages/core/cleaning.js` (bản 2.1 đầu tiên).
+- **Tái hiện:** `"see https://example.com/a,b now"` → `"seehttps://example.com/a,b now"`.
+- **Sửa:** `cleanProseStrict` giữ khoảng trắng đầu/cuối của từng đoạn chữ.
+- **Test:** `tests/cleaning.test.js` ("khoảng trắng cạnh vùng bảo vệ").
+
+## F-28 — P1 — Request model không có timeout, lỗi không có mã
+
+- **File:** `extension/background.js`.
+- **Sửa:** `AbortController` 60s; mã lỗi `PROVIDER_*`/`NETWORK_ERROR`/`CANCELLED`; body lỗi cắt
+  180 ký tự; không log key.
+- **Test:** **chưa có test tự động** (cần mock `fetch`) — ghi nhận ở ROADMAP #2.
+
+## F-29 — P2 — `test:core` trỏ file không tồn tại
+
+- **File:** `package.json` (`tests/document.test.js`).
+- **Sửa:** bỏ file không tồn tại, thêm `tests/cleaning.test.js`; `npm test` chạy 73 test.

@@ -2,129 +2,123 @@
 
 ## 1. Ràng buộc thiết kế
 
-1. **Web phải chạy offline, không build.** `index.html` được phục vụ trực tiếp bởi GitHub Pages;
-   mở bằng `file://` vẫn phải chạy. Vì vậy không dùng bundler, không import ESM trong trang.
-2. **Extension MV3** phải đóng gói được từ thư mục `extension/`.
-3. **CLI Python** chạy bằng stdlib, không cài package.
+1. **Web phải chạy offline, không build.** `index.html` được GitHub Pages phục vụ trực tiếp; mở
+   bằng `file://` vẫn chạy. Không import ESM trong trang.
+2. **Extension MV3** đóng gói từ thư mục `extension/`.
+3. **CLI Python** chạy stdlib, không cài package.
 4. **Không gửi văn bản/file đi đâu** trừ khi người dùng bấm Humanize và đã nhập key.
 5. **Bản gốc không bị ghi đè** — mọi phép biến đổi phải có đường lùi.
 
-## 2. Sơ đồ hiện tại (sau Phase 1)
+## 2. Sơ đồ (sau 2.1)
 
 ```
-packages/core/                 ← nguồn logic dùng chung (ESM, không dependency)
-  unicode.js      phân loại codepoint, scan, clean + audit trail
-  entities.js     trích xuất số/URL/email/ngày/trích dẫn/liệt kê
-  preservation.js kiểm tra bảo toàn sau khi viết lại
-  diff.js         word diff, applyEdits, similarity
-  document.js     DocumentSession: original/working/proposed/accepted/exported
-  markdown.js     tách code/link khỏi phần chữ, stripMarkdown, đếm cấu trúc
-
-tests/                         ← node --test, không cài gì
-  unicode / preservation / diff / markdown / parity / core-sync / web-inline
-
-tools/
-  trace_scan.py     CLI (bảng Unicode tương đương core, audit, parity)
-  build_guide.py    GUIDE.md → index.html (--check)
-  sync_core.py      packages/core → extension/core (--check)
-  check_extension.js kiểm tra manifest + import + icon
+packages/
+  core/                        ← NGUỒN DUY NHẤT cho logic dùng chung (ESM, 0 dependency)
+    unicode.js                 phân loại codepoint, scan, clean + audit
+    entities.js                số/URL/email/ngày/trích dẫn/liệt kê
+    preservation.js            kiểm tra bảo toàn sau viết lại
+    cleaning.js                engine làm sạch: bảo vệ vùng cấu trúc + gọi unicode.clean
+    markdown.js                tách code/link, stripMarkdown, đếm cấu trúc
+    diff.js                    word diff, applyEdits, similarity
+    document.js                DocumentSession
+    index.js                   re-export
+  writing/
+    prompts.js                 NGUỒN DUY NHẤT cho prompt + 9 chế độ + mệnh đề Markdown
 
 extension/
-  manifest.json     MV3, background type=module, 4 permission hẹp
-  background.js     gọi model + checkPreservation
-  core/             bản sao tự động của entities.js + preservation.js
-  content.js        sidebar nổi trong shadow DOM (chỉ dựng khi mở)
-  sidebar.js        UI + cleaner riêng (chưa migrate sang core)
-  panel.js          Side Panel gốc
+  manifest.json                MV3, background type=module, 4 permission
+  background.js                gọi model (timeout 60s), chuẩn hoá lỗi, checkPreservation
+  core/
+    entities.js                sinh tự động (sync_core.py)   ← service worker import
+    preservation.js            sinh tự động (sync_core.py)
+    prompts.js                 sinh tự động (sync_assets.js)
+    bundle.js                  sinh tự động (sync_assets.js) ← classic script → globalThis.TraceCore
+  content.js                   sidebar nổi trong shadow DOM (chỉ dựng khi mở)
+  sidebar.js                   UI adapter: KHÔNG có regex làm sạch riêng
+  panel.js / panel.html        Side Panel gốc
 
-index.html                      ← app 1 file: UI + cleaner + scan + forensics + guide nhúng
-  ↳ khối preservationCheck nhúng (được test trích xuất từ chính file)
+index.html                     app 1 file: UI + scan + forensics + guide nhúng
+  ├─ khối @generated:prompts   prompt + preset + MD clauses (sinh từ packages/writing/prompts.js)
+  └─ cleanText/preservationCheck  BẢN NHÚNG — chưa migrate sang core (xem §6)
+
+tools/
+  trace_scan.py                CLI, bảng Python tương đương core
+  build_guide.py               GUIDE.md → index.html (--check)
+  sync_core.py                 core → extension/core (entities, preservation) (--check)
+  sync_assets.js               core → bundle; prompts → extension + index.html (--check)
+  check_extension.js           manifest, thứ tự nạp core, artifact, icon
+tests/                         node --test, 73 test
 ```
 
-## 3. Luồng sau thay đổi
-
-### Làm sạch (offline)
+## 3. Luồng làm sạch (một engine, ba bề mặt)
 
 ```
-text → cleanText()
-  ├─ NFC
-  ├─ bảo vệ URL (placeholder \u0000N\u0000)
-  ├─ bảo vệ code fence/inline code (\u0001N\u0001)
-  ├─ bảo vệ emoji cờ (\u0002N\u0002)
-  ├─ phân loại từng codepoint (BLANKS/KILL/HOMO/joiner/VS)
-  ├─ sửa câu: intensifier, eval adjective, mở/kết, Oxford comma, tách câu,
-  │           frame không mang phủ định, bullet (chỉ khi Markdown tắt), contraction
-  ├─ stripMarkdown (nếu Markdown tắt)
-  └─ phục hồi code → URL → emoji cờ, chuẩn hoá khoảng trắng
+text
+ └─ cleanText(text, { markdown })
+      ├─ nếu markdown === false: stripMarkdown (bỏ marker, giữ nội dung)
+      ├─ segmentText: tách code fence / inline code / link / autolink / URL / email
+      ├─ với mỗi đoạn chữ: unicode.clean()
+      │    ├─ giữ ZWJ/ZWNJ/variation selector/emoji cờ (mặc định)
+      │    ├─ xoá ZWSP/BOM/soft hyphen/tag char/PUA/bidi
+      │    ├─ khoảng trắng lạ → space, typography tuỳ chọn
+      │    └─ audit: { index (offset chuỗi gốc), hex, category, action, reason }
+      └─ countsFor(): đếm tell để hiển thị (không phải xác suất, không phải tác giả)
 ```
 
-### Viết lại + kiểm tra bảo toàn
+Bất biến: **không** xoá mục danh sách, **không** đổi phủ định, **không** sửa câu. Mọi phép "sửa
+câu" của bản cũ (tricolon, "not just", khung đối lập, xoá signpost) đã bị bỏ khỏi extension.
+
+## 4. Luồng viết lại
 
 ```
-src (original) ──► callLLM ──► raw
-                                  ├─ cleanText(raw) ──► cleaned (hiển thị)
-                                  └─ preservationCheck(original, raw)
-                                        → số / URL / email / ngày / phủ định /
-                                          điều kiện / trích dẫn / liệt kê / Markdown
-                                        → issues[] (failed | warning)
-original vẫn nằm trong #src; nút "↩ Bản gốc trước khi chạy" khôi phục
+original ──► buildPrompt(mode, {markdown})  [packages/writing/prompts.js]
+              ├─ web: nối vào callLLM trong trang
+              └─ extension: background.js → resolvePrompt(cfg) + timeout 60s
+         ──► model ──► proposed
+                        └─ checkPreservation(original, proposed)
+                              numbers / urls / emails / dates / entities / negation /
+                              conditions / citations / structure / lists / length
+                              semanticReview: not_checked
 ```
 
-`preservation.semanticReview` luôn `not_checked`: không có kiểm tra ngữ nghĩa tự động đáng tin,
-nên UI không được nói "đã kiểm tra nghĩa".
+Prompt tự soạn của người dùng vẫn được dùng, nhưng **luôn** bị nối thêm khối chế độ + mệnh đề
+Markdown lấy từ registry — không thể vô tình bỏ ràng buộc bảo toàn.
 
-### Extension
+## 5. Artifact sinh tự động và chống lệch
 
-```
-panel/content ──sendMessage({type:"humanize", text, cfg})──► background
-background: humanize() = callModel() + checkPreservation()
-            trả { text, preservation }
-sidebar: hiện hộp bảo toàn, nút "↩ Bản trước"
-```
+| Artifact | Nguồn | Tool | Check |
+|---|---|---|---|
+| `extension/core/{entities,preservation}.js` | `packages/core` | `sync_core.py` | `--check` + `tests/core-sync.test.js` |
+| `extension/core/bundle.js` | 7 module `packages/core` | `sync_assets.js` | `--check` + `tests/assets-sync.test.js` |
+| `extension/core/prompts.js` | `packages/writing/prompts.js` | `sync_assets.js` | `--check` |
+| khối prompt trong `index.html` | `packages/writing/prompts.js` | `sync_assets.js` | `--check` + `tests/writing-prompts.test.js` |
 
-## 4. Mô hình tài liệu (`DocumentSession`)
+Bundle là bản dịch ESM → classic script bằng transform tối thiểu; tool **từ chối** mọi module dùng
+`export default`/`export *`/`export {}` để không sinh bundle sai. Sửa `packages/core` thì phải chạy
+lại tool; CI fail nếu quên.
 
-| Trạng thái | Ai đổi | Ý nghĩa |
-|---|---|---|
-| `original` | không ai | nguyên văn người dùng nhập |
-| `working` | `acceptAll()` / `commit()` | bản đang sửa |
-| `proposed` | `propose()` | đề xuất của model, chưa áp dụng |
-| `accepted` | `acceptAll()` | snapshot lần chấp nhận gần nhất |
-| `exported` | `export()` | snapshot lúc xuất file |
+## 6. Trùng lặp còn lại (được ghi nhận, không giấu)
 
-`revisions[]` + `pointer` cho undo/redo; `commit()` sau khi undo cắt nhánh redo.
-Hiện `DocumentSession` mới được dùng trong test và là API cho giai đoạn sau — web app chưa
-chuyển sang dùng nó (xem ROADMAP).
+`index.html` vẫn giữ `cleanText()` và `preservationCheck()` nhúng. Lý do: trang phải chạy `file://`
+mà không build. Hệ quả:
 
-## 5. Bảo toàn dữ kiện — thiết kế
+- Web và extension **có thể** lệch hành vi làm sạch. Test hiện chỉ bảo vệ extension ↔ core
+  (`tests/extension-sidebar.test.js`) và Python ↔ JS (`tests/parity.test.js`).
+- Khối nhúng vẫn được test bằng cách trích xuất chính nó (`tests/web-inline.test.js`), nên không
+  thể lệch âm thầm mà test xanh — nhưng đó là test *bản nhúng*, không phải test *core*.
 
-- **Deterministic trước, LLM sau.** Prompt chỉ là hướng dẫn; kiểm tra thật chạy bằng mã.
-- **Multiset, không phải set.** "2 giây" xuất hiện 2 lần thì bản mới phải còn 2 lần.
-- **Quan hệ số học.** `from 4.2 to 2.1` bị đảo thành `from 2.1 to 4.2` → lỗi.
-- **Phủ định/điều kiện đếm theo token**, không theo câu, để bắt "not … unless" bị bỏ.
-- **Liệt kê** so khớp từng mục sau khi lowercase.
-- **Markdown** so số heading/bullet/fence/link; bật giữ Markdown thì mất cấu trúc = lỗi.
-- **Không có "passed" cho việc chưa chạy.** `semanticReview` luôn `not_checked`.
+Bước tiếp theo (xem ROADMAP #1): nhúng bundle vào `index.html` và biến hai hàm nhúng thành adapter
+mỏng gọi `TraceCore`.
 
-## 6. Vì sao vẫn còn trùng lặp
-
-`index.html` phải là một file chạy được bằng `file://`, nên không thể `import` từ `packages/core`.
-Giải pháp đang dùng:
-
-- Hàm `preservationCheck` nhúng trong `index.html`, **được test bằng cách trích xuất chính khối mã
-  đó** (`tests/web-inline.test.js`), nên không thể lệch âm thầm mà test vẫn xanh.
-- `extension/core/` là bản sao sinh tự động, có `sync_core.py --check` và test khớp hash nội dung.
-
-Đây là trả nợ một phần; hợp nhất hoàn toàn `cleanText` với `unicode.js` là việc của Phase 2 và cần
-bộ test hồi quy rộng hơn (đặc biệt cho các phép sửa câu).
-
-## 7. Các quyết định có chủ ý
+## 7. Quyết định có chủ ý
 
 | Quyết định | Lý do |
 |---|---|
-| Không thêm dependency | giữ Pages/extension/CLI chạy không cần cài đặt, giảm rủi ro chuỗi cung ứng |
-| Không viết parser ZIP/PDF mới | rủi ro cao; ưu tiên giới hạn tài nguyên và review trước |
+| Không thêm dependency | Pages/extension/CLI chạy không cần cài; giảm rủi ro chuỗi cung ứng |
+| Không viết parser ZIP/PDF mới | rủi ro cao; ưu tiên giới hạn tài nguyên + review |
 | Giữ ZWJ/ZWNJ/VS mặc định | phá tiếng Ả Rập/Indic/emoji là lỗi dữ liệu |
-| Giữ tag char của emoji cờ | xoá sẽ phá emoji; audit ghi rõ lý do |
-| `semanticReview: not_checked` | không được tạo cảm giác an toàn giả |
-| Bỏ quy tắc "not just" | đảo nghĩa; để người dùng/LLM xử lý có ngữ cảnh |
+| Giữ tag char của emoji cờ | xoá sẽ phá emoji; audit ghi lý do |
+| `semanticReview: not_checked` | không tạo cảm giác an toàn giả |
+| Bỏ mọi quy tắc "sửa câu" phá huỷ | đã gây mất mục danh sách và đảo phủ định ở extension 1.4.0 |
+| Chín chế độ viết lại thay vì 4 preset | mỗi chế độ có ràng buộc riêng, không chỉ đổi nhãn |
+| Web chưa migrate cleaner | cần nhúng bundle + đổi test; làm ẩu sẽ phá app đang chạy |
