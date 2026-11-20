@@ -81,7 +81,7 @@
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
         if (!res) return reject(new Error("background không trả lời — thử tải lại extension"));
         if (res.error) return reject(new Error(res.error));
-        resolve(res.text);
+        resolve(res);
       });
     });
   });

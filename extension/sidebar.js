@@ -200,7 +200,8 @@ window.TraceSidebar = (() => {
       <div class="status" id="status"></div>
       <textarea id="output" readonly placeholder="Kết quả…"></textarea>
       <div class="metrics" id="metrics"></div>
-      <div class="row"><button id="btnCopy">Copy</button><button id="btnInsert" class="primary">Dán vào trang</button></div>
+      <details id="guardBox" hidden><summary>Kiểm tra bảo toàn nội dung</summary><div id="guardList" class="status"></div></details>
+      <div class="row"><button id="btnCopy">Copy</button><button id="btnInsert" class="primary">Dán vào trang</button><button id="btnRevert" class="ghost" title="Khôi phục văn bản trước lần chạy gần nhất">↩ Bản trước</button></div>
       <details>
         <summary>Prompt humanize — xem &amp; sửa <span id="pLen" style="color:#7f95b3"></span></summary>
         <textarea id="promptTa" spellcheck="false" style="min-height:150px" placeholder="Prompt gửi kèm văn bản…"></textarea>
@@ -233,6 +234,7 @@ window.TraceSidebar = (() => {
     let order = localStorage.getItem("traceChainOrder") === "clean-first" ? "clean-first" : "human-first";
     let busy = false;
     let mdKeep = localStorage.getItem("traceMdKeep") !== "0";
+    let lastRunOriginal = "";
 
     // prompt dùng chung với web app (đồng bộ 2 chiều qua chrome.storage)
     const promptTa = $("promptTa"), promptStatus = $("promptStatus");
@@ -376,13 +378,16 @@ window.TraceSidebar = (() => {
       busy = true;
       $("btnRun").disabled = true;
       const t0 = performance.now();
-      let cur = text, lastClean = null;
+      let cur = text, lastClean = null, guard = null;
+      lastRunOriginal = input.value;
       try {
         for (const step of seq) {
           if (step === "human") {
             say("Humanize: đang gọi model…");
             if (typeof hooks.humanize !== "function") throw new Error("extension chưa nối background");
-            cur = await hooks.humanize(cur, promptText, { markdown: mdKeep });
+            const r = await hooks.humanize(cur, promptText, { markdown: mdKeep });
+            if (r && typeof r === "object" && typeof r.text === "string"){ cur = r.text; guard = r.preservation || null; }
+            else cur = r;
           } else {
             say("Làm sạch…");
             lastClean = clean(cur, { structural: true, words: true, markdown: mdKeep });
@@ -393,6 +398,7 @@ window.TraceSidebar = (() => {
         else lastClean = Object.assign({}, lastClean, { left: stats(cur) }); // "còn tell" phải đếm trên kết quả cuối
         output.value = cur;
         paintMetrics(lastClean);
+        paintGuard(guard);
         say("Xong · " + seq.map(s => s === "human" ? "humanize" : "làm sạch").join(" → ") +
             " · " + ((performance.now() - t0) / 1000).toFixed(1) + "s", "ok");
       } catch (e) {
@@ -403,9 +409,22 @@ window.TraceSidebar = (() => {
       }
     }
 
+    function paintGuard(guard){
+      const box = $("guardBox"), list = $("guardList");
+      if (!box || !list) return;
+      if (!guard){ box.hidden = true; list.textContent = ""; return; }
+      const issues = guard.issues || [];
+      box.hidden = false;
+      list.textContent = issues.length
+        ? issues.map(i => (i.severity === "failed" ? "LỖI: " : "Cảnh báo: ") + i.detail).join("\n")
+        : "Số / URL / email / ngày / phủ định / trích dẫn / Markdown khớp. Ngữ nghĩa sâu chưa được kiểm tra tự động.";
+      box.open = issues.length > 0;
+    }
+
     function onlyClean() {
       const t = input.value.trim();
       if (!t) return say("Chưa có văn bản.", "err");
+      lastRunOriginal = input.value;
       const c = clean(t, { structural: true, words: true, markdown: mdKeep });
       output.value = c.text;
       paintMetrics(c);
@@ -417,11 +436,14 @@ window.TraceSidebar = (() => {
       const t = input.value.trim();
       if (!t) return say("Chưa có văn bản.", "err");
       busy = true; $("btnRun").disabled = true;
+      lastRunOriginal = input.value;
       try {
         say("Humanize: đang gọi model…");
         const r = await hooks.humanize(t, promptText, { markdown: mdKeep });
-        output.value = r;
-        paintMetrics(clean(r, { markdown: mdKeep }));
+        const outText = r && typeof r === "object" ? r.text : r;
+        output.value = outText;
+        paintMetrics(clean(outText, { markdown: mdKeep }));
+        paintGuard(r && typeof r === "object" ? r.preservation : null);
         say("Chỉ humanize — chưa làm sạch ký tự.", "ok");
       } catch (e) { say("Lỗi: " + (e && e.message ? e.message : e), "err"); }
       finally { busy = false; $("btnRun").disabled = false; }
@@ -449,6 +471,14 @@ window.TraceSidebar = (() => {
       if (!output.value) return say("Chưa có kết quả.", "err");
       const ok = hooks.insert ? await hooks.insert(output.value) : false;
       say(ok ? "Đã dán vào ô đang chọn trên trang." : "Không tìm thấy ô nhập — đã copy vào clipboard.", ok ? "ok" : "");
+    });
+    $("btnRevert").addEventListener("click", () => {
+      if (!lastRunOriginal) return say("Chưa có bản trước để khôi phục.", "err");
+      input.value = lastRunOriginal;
+      output.value = "";
+      $("metrics").innerHTML = "";
+      paintGuard(null);
+      say("Đã khôi phục văn bản trước lần chạy gần nhất.", "ok");
     });
     $("btnClose").addEventListener("click", () => { closeZoom(); if (hooks.close) hooks.close(); });
 

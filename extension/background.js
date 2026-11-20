@@ -1,8 +1,10 @@
-/* Trace Cleaner — service worker
+/* Trace Cleaner — service worker (ES module)
    - Mọi request mạng chạy ở đây để content script không bị CSP của trang chặn.
    - Mở sidebar: ưu tiên Side Panel gốc của Chrome (cần permission "sidePanel"),
      luôn có đường dự phòng để bấm icon không bao giờ im lặng.
    - Model Google: tự đổi model khi 404, tự thử lại khi 503. */
+
+import { checkPreservation } from "./core/preservation.js";
 
 const APP_URL = "https://norvixadamas.github.io/trace-cleaner/";
 
@@ -88,7 +90,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
   if (msg.type === "humanize") {
     humanize(msg.text || "", msg.cfg || {})
-      .then(text => sendResponse({ text }))
+      .then(result => sendResponse(result))
       .catch(e => sendResponse({ error: String(e && e.message || e) }));
     return true;
   }
@@ -99,7 +101,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const isModelErr = m => /HTTP 404|not found|not supported for generateContent/i.test(m);
 const isBusyErr = m => /HTTP 503|UNAVAILABLE|high demand|overloaded/i.test(m);
 
+/** Gọi model rồi kiểm tra bảo toàn trên kết quả; không tin prompt. */
 async function humanize(text, cfg) {
+  const out = await callModel(text, cfg);
+  return { text: out, preservation: checkPreservation(text, out, { markdown: !!cfg.markdown }) };
+}
+
+async function callModel(text, cfg) {
   if (!text.trim()) throw new Error("văn bản rỗng");
   let promptText = (cfg.prompt || "").trim() || PROMPT;
   promptText += cfg.markdown ? MD_KEEP_CLAUSE : MD_PLAIN_CLAUSE;
