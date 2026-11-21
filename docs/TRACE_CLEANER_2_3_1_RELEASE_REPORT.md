@@ -13,10 +13,10 @@
 | Engine | `2.3` (không đổi hành vi engine) |
 | Branch | `hardening/2.3.1` (tách từ `main` tại `9de92f0`) |
 | Baseline | `9de92f037b18607d71f8ed2d5c63a19d9421f033` |
-| Commit | commit release trên `main` (hash: `git log -1`; không có co-author/attribution khác ngoài NorvixAdamas) |
+| Commit release | **ef83f6cbee4b25a82adb64452376c25b4fdedd41** trên `main`, author/committer chỉ NorvixAdamas, không co-author |
 | Tag | không tạo trong lần push này |
-| Push | `origin/main`, dùng credential đã lưu của NorvixAdamas; không force-push |
-| CI | kiểm sau khi push bằng GitHub check-runs; kết quả ghi ở cuối mục I |
+| Push | thành công `9de92f0..ef83f6c` lên `origin/main`, credential đã lưu của NorvixAdamas; không force-push |
+| CI | **5/5 success** trên `ef83f6c`: test, build, e2e, deploy, report-build-status (GitHub check-runs, 2026-11-21) |
 
 ## B. C2PA hardening
 
@@ -143,6 +143,9 @@ Chạy trên Windows, Node `v26.13.0`, Playwright `1.65.1` + Chromium bundled, n
 
 Không chạy: benchmark 2.3.1 (không có thay đổi thuật toán đáng đo; không tạo số mới), corpus độc
 lập, PDF.js, security fuzz/property-based ngoài các test adversarial thủ công ở trên.
+
+CI remote của commit `ef83f6c`: cả 5 check (`test`, `build`, `e2e`, `deploy`, `report-build-status`)
+đều `completed / success`. CI xanh chỉ xác nhận các job đã cấu hình, không thay đổi kết luận ở mục K.
 
 ## J. Remaining limitations (chưa đạt gate)
 
