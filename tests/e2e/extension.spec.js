@@ -16,11 +16,13 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const extensionPath = path.join(root, 'extension');
+const sourceExtension = path.join(root, 'extension');
+let extensionPath;
 
 let context;
 let extensionId;
 let panel;
+let worker;
 
 async function storage(area, key) {
   return panel.evaluate(([areaName, k]) => new Promise(resolve => {
@@ -40,6 +42,15 @@ async function configure({ base = 'https://api.openai.com/v1', model = 'gpt-4o-m
 }
 
 test.beforeAll(async () => {
+  // Hộp thoại cấp host permission của Chrome là UI trình duyệt, Playwright không
+  // bấm được. Bản copy cho E2E khai báo sẵn https://example.test/* để kiểm cơ chế
+  // chèn; manifest phát hành vẫn chỉ có optional_host_permissions.
+  extensionPath = await fs.mkdtemp(path.join(os.tmpdir(), 'trace-ext-'));
+  await fs.cp(sourceExtension, extensionPath, { recursive: true });
+  const manifestPath = path.join(extensionPath, 'manifest.json');
+  const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+  manifest.host_permissions = [...(manifest.host_permissions || []), 'https://example.test/*'];
+  await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'trace-e2e-'));
   context = await chromium.launchPersistentContext(userDataDir, {
     headless: false,
@@ -49,7 +60,7 @@ test.beforeAll(async () => {
       '--no-first-run',
     ],
   });
-  let worker = context.serviceWorkers()[0];
+  worker = context.serviceWorkers()[0];
   if (!worker) worker = await context.waitForEvent('serviceworker', { timeout: 20_000 });
   extensionId = new URL(worker.url()).host;
   panel = await context.newPage();
@@ -67,9 +78,9 @@ test('panel.html render sidebar thật và trả lời ping từ bundle', async 
   }));
   expect(info.ok).toBe(true);
   expect(info.engineVersion).toBe('2.3');
-  expect(info.promptVersion).toBe('2.3.0');
+  expect(info.promptVersion).toBe('2.3.1');
   const version = await panel.evaluate(() => chrome.runtime.getManifest().version);
-  expect(version).toBe('2.3.0');
+  expect(version).toBe('2.3.1');
 });
 
 test('API key: mặc định chỉ ở session, chỉ vào local khi tick ghi nhớ, xoá được', async () => {
@@ -168,8 +179,23 @@ test('floating sidebar: inject theo user gesture, lấy chữ trong ô, đóng/m
   await expect(page.locator('#editor')).toHaveValue('Nội dung trong ô của trang.');
 
   await page.locator('#editor').focus();
-  await page.keyboard.press('Alt+Shift+S');
   const host = page.locator('#trace-cleaner-host');
+  // Không có content_scripts tĩnh: trước thao tác của người dùng, trang sạch.
+  await expect(host).toHaveCount(0);
+
+  // Mô phỏng đúng file-list mà command Alt+Shift+F / action dùng để chèn.
+  await page.bringToFront();
+  const tabId = await worker.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab && tab.id;
+  });
+  await worker.evaluate(async id => {
+    await chrome.scripting.executeScript({
+      target: { tabId: id },
+      files: ['core/bundle.js', 'config.js', 'sidebar.js', 'content.js'],
+    });
+    await chrome.tabs.sendMessage(id, { type: 'toggle' });
+  }, tabId);
   await expect(host).toHaveCount(1);
   const wrap = host.locator('.wrap');
   await expect(wrap).toHaveClass(/on/);
@@ -181,6 +207,16 @@ test('floating sidebar: inject theo user gesture, lấy chữ trong ô, đóng/m
   await expect(wrap).not.toHaveClass(/on/);
   await page.keyboard.press('Alt+Shift+S');
   await expect(wrap).toHaveClass(/on/);
+
+  // Chèn lại không tạo sidebar/ listener trùng.
+  await worker.evaluate(async id => {
+    await chrome.scripting.executeScript({
+      target: { tabId: id },
+      files: ['core/bundle.js', 'config.js', 'sidebar.js', 'content.js'],
+    });
+    await chrome.tabs.sendMessage(id, { type: 'toggle' });
+  }, tabId);
+  await expect(host).toHaveCount(1);
 
   // Không can thiệp nút của trang.
   let clicked = 0;

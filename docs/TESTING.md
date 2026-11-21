@@ -13,6 +13,23 @@ node tools/bench.js                   # benchmark (không phải test)
 
 Yêu cầu: Node ≥ 20, Python 3.11+ cho parity/build. Test Python tự `skip` nếu không có `python`.
 
+## Kết quả chạy 2026-11-21 (sau hardening 2.3.1)
+
+| Lệnh | Kết quả |
+|---|---|
+| `npm test` | **328 pass, 0 fail, 0 skip** |
+| `npx playwright test` | **6 pass, 0 fail** (5 extension + 1 web rewrite) |
+| `node tools/sync_assets.js --check` | `artifact khớp nguồn` |
+| `node tools/check_extension.js` | `manifest OK · v2.3.1 · 4 permission` (không còn warning content script rộng) |
+| `node tools/eval_writing.js --check` | dev 20/20 · held-out 10/10, 0 thừa |
+| `python tools/build_guide.py --check` | `index.html không đổi (guide đã khớp)` |
+
+Bộ test 2.3.1 thêm: ZIP đọc đồng thời/khác `maxBytes`, huỷ giữa inflate, `close()` khi pending,
+central directory trỏ sai, tên không UTF-8; XML giới hạn byte UTF-8/BOM/invalid UTF-8/control char;
+C2PA PNG/JPEG vượt biên và cộng dồn, JUMBF length/depth/box count, CBOR depth/collection/string/
+trailing/duplicate key, DER overflow, exclusion sai. Chi tiết theo hạng mục:
+[docs/TRACE_CLEANER_2_3_1_RELEASE_REPORT.md](TRACE_CLEANER_2_3_1_RELEASE_REPORT.md).
+
 ## Kết quả chạy 2026-11-20 (sau 2.3)
 
 | Lệnh | Kết quả |
@@ -21,7 +38,7 @@ Yêu cầu: Node ≥ 20, Python 3.11+ cho parity/build. Test Python tự `skip` 
 | `npx playwright test` | **6 pass, 0 fail** (5 extension + 1 web rewrite) |
 | `node tools/sync_assets.js --check` | `artifact khớp nguồn` |
 | `python tools/sync_core.py --check` | `extension/core khớp packages/core` |
-| `node tools/check_extension.js` | `manifest OK · v2.3.0 · 4 permission` (1 warning: content script rộng) |
+| `node tools/check_extension.js` | `manifest OK · v2.3.0 · 4 permission` (1 warning: content script rộng) — lịch sử 2.3.0 |
 | `node tools/eval_writing.js --check` | dev 20/20 · held-out 10/10, 0 thừa |
 | `node --check` script tách từ `index.html` + 5 file extension | exit 0 |
 
@@ -32,11 +49,11 @@ content script và storage thật; provider được giả lập bằng `context
 
 | Test | Nội dung kiểm |
 |---|---|
-| panel render | `panel.html` thật, ping trả `engine 2.3` / `prompt 2.3.0`, manifest 2.3.0 |
+| panel render | `panel.html` thật, ping trả `engine 2.3` / `prompt 2.3.1`, manifest 2.3.1 |
 | API key | mặc định không có key trong local, key nằm ở session; tick ghi nhớ → local; reload → nạp lại; Xoá key → sạch cả hai |
 | huỷ request | background abort thật (`requestfailed` = `net::ERR_ABORTED`), UI dừng chờ, kết quả về muộn không ghi đè output |
 | custom host | origin chưa cấp quyền → `CONFIG_ERROR` trước khi gọi mạng |
-| sidebar nổi | `Alt+Shift+S` inject, lấy chữ từ textarea của trang, đóng/mở lại, nút của trang vẫn click được |
+| sidebar nổi | không có host trước thao tác; chèn bằng `executeScript` (đúng file-list của command), lấy chữ từ textarea, đóng/mở, chèn lại vẫn một host, nút của trang vẫn click được |
 | web rewrite (A9) | hiển thị = proposal = bản Accept; raw của model không lọt vào Review; khôi phục bản gốc đúng |
 
 Không test được bằng Playwright: bong bóng Side Panel do Chrome vẽ (chỉ mở bằng click toolbar);
@@ -102,7 +119,7 @@ provider gọi API thật (không có key), accessibility audit.
 ## Checklist thủ công cho extension (bắt buộc trước khi tin tưởng permission model)
 
 1. `chrome://extensions` → Load unpacked `extension/` → không có lỗi manifest.
-2. Bấm icon → Side Panel mở; `Alt+Shift+T`; `Alt+Shift+S` mở sidebar nổi.
+2. Bấm icon → Side Panel mở; `Alt+Shift+T`; `Alt+Shift+F` chèn sidebar nổi, `Alt+Shift+S` bật/tắt sau khi đã chèn.
 3. Trên trang có `<textarea>`: "Lấy văn bản đang chọn", "Dán vào trang" hoạt động.
 4. Trang `chrome://settings` (restricted): không có sidebar, thông báo rõ ràng, không crash.
 5. Chạy Humanize không có key → `CONFIG_ERROR`; key sai → `PROVIDER_AUTH_ERROR`.

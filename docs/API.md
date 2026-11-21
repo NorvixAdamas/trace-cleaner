@@ -1,7 +1,7 @@
 # API và hợp đồng dữ liệu
 
 Mọi kết quả mang `schemaVersion: '1.0'`. Engine báo `ENGINE_VERSION = '2.3'`, prompt báo
-`PROMPT_VERSION = '2.3.0'`.
+`PROMPT_VERSION = '2.3.1'`.
 
 ## Làm sạch
 

@@ -101,6 +101,8 @@ proposal(text, baseRevision) ──acceptProposal(id)──→ chỉ khi baseRev
 - `sidebar.js`: UI adapter (không `chrome.*`), nhận hooks `humanize`, `cancel`, `grab`, `insert`,
   `loadCfg`, `saveCfg`, `getPrompt`, `setPrompt`.
 - `content.js`: chrome bridge + shadow DOM; `panel.js`: Side Panel dùng cùng sidebar.
+- Không còn content script tĩnh. Command `toggle-floating` chèn bundle + UI theo `activeTab`,
+  sau đó `content.js` nhận message `toggle`; guard `__traceCleanerLoaded` bảo đảm idempotent.
 - Preservation gate: kết quả có issue `severity: failed` ⇒ nút Dán yêu cầu xác nhận.
 
 ## Python CLI
@@ -109,7 +111,18 @@ proposal(text, baseRevision) ──acceptProposal(id)──→ chỉ khi baseRev
 (tầng ký tự/whitespace, CRLF). Python **không** có Markdown protection hay preservation — giới hạn
 này được ghi rõ trong README/CLI help.
 
+## Hardening 2.3.1
+
+- ZIP: mọi `read()` đi qua promise queue; `maxBytes` là biến cục bộ từng lần đọc, ngân sách tổng
+  của archive vẫn dùng chung; abort gọi `reader.cancel()`.
+- XML: `parseXml` nhận bytes, kiểm `maxXmlBytes` bằng UTF-8 byte trước khi decode; OOXML đọc part
+  với `maxBytes` ngay trong lúc inflate.
+- C2PA: `C2PA_LIMITS` là ngân sách duy nhất cho container/JUMBF/CBOR/cert; `alg` chỉ lấy từ
+  protected header; ghim lá trả `signature_valid_pinned`, không phải PKI.
+- Chưa có worker: parser vẫn synchronous trên main thread (xem báo cáo 2.3.1, mục D).
+
 ## Giới hạn đã biết
+
 
 - `diffWords` là O(n·m) có trần 4.000.000 ô; vượt trần → thay cả khối.
 - Parser PDF/OOXML là heuristic: không phải parser đầy đủ, không parse tracked changes.

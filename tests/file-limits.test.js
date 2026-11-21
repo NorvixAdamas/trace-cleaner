@@ -90,3 +90,10 @@ test('giới hạn parser là bất biến và có đủ khoá', () => {
     assert.equal(typeof PARSER_LIMITS[key], 'number', key);
   }
 });
+
+test('assertSafeXml đo byte UTF-8, không phải số ký tự', () => {
+  const text = `<r>${'é'.repeat(10)}</r>`; // 20 byte cho phần text
+  assert.throws(() => assertSafeXml(text, { limits: { ...PARSER_LIMITS, maxXmlBytes: 25 } }),
+    error => error.reason === 'too_large');
+  assert.equal(assertSafeXml(new TextEncoder().encode('<r>é</r>'), { limits: { ...PARSER_LIMITS, maxXmlBytes: 9 } }), true);
+});

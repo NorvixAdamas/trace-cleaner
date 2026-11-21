@@ -37,10 +37,13 @@ test('extension/core/prompts.js là bản copy của registry', () => {
   assert.match(copy.split('\n')[0], /AUTO-GENERATED/);
 });
 
-test('manifest nạp core + config trước sidebar, version 2.3.0', () => {
+test('manifest 2.3.1 không chèn content script tĩnh, có command cho sidebar nổi', () => {
   const manifest = JSON.parse(read('extension/manifest.json'));
-  assert.equal(manifest.version, '2.3.0');
-  assert.deepEqual(manifest.content_scripts[0].js.slice(0, 3), ['core/bundle.js', 'config.js', 'sidebar.js']);
+  assert.equal(manifest.version, '2.3.1');
+  assert.equal(manifest.content_scripts, undefined, 'không được chèn content script trên mọi trang');
+  assert.ok(manifest.commands['toggle-floating'], 'thiếu command chèn sidebar theo thao tác người dùng');
+  assert.ok(manifest.permissions.includes('activeTab'));
+  assert.ok(manifest.permissions.includes('scripting'));
   assert.ok(manifest.optional_host_permissions.includes('https://*/*'));
   const panel = read('extension/panel.html');
   assert.ok(panel.indexOf('src="core/bundle.js"') < panel.indexOf('src="config.js"'), 'panel nạp config trước core');

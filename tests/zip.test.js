@@ -163,3 +163,72 @@ test('zip: deflate-raw roundtrip qua builder', async () => {
   const packed = await deflateRaw(raw);
   assert.ok(packed.length < raw.length);
 });
+
+test('zip: đọc đồng thời hai entry với maxBytes riêng không ghi đè ngân sách', async () => {
+  const a = 'a'.repeat(3000);
+  const b = 'b'.repeat(2000);
+  const zip = await openZip(await buildZip([{ name: 'a.txt', data: a }, { name: 'b.txt', data: b }]));
+  const [ra, rb] = await Promise.allSettled([
+    zip.read('a.txt', { maxBytes: 1000 }),
+    zip.read('b.txt'),
+  ]);
+  assert.equal(ra.status, 'rejected');
+  assert.equal(ra.reason.reason, ZIP_ERRORS.ENTRY_TOO_LARGE);
+  assert.equal(rb.status, 'fulfilled');
+  assert.equal(text(rb.value), b);
+  assert.equal(zip.stats().observed, b.length);
+});
+
+test('zip: hai lần đọc cùng entry đều trả đúng dữ liệu và được tính đủ', async () => {
+  const data = 'c'.repeat(2048);
+  const zip = await openZip(await buildZip([{ name: 'a.txt', data }]));
+  const [first, second] = await Promise.all([zip.read('a.txt'), zip.read('a.txt')]);
+  assert.equal(text(first), data);
+  assert.equal(text(second), data);
+  assert.equal(zip.stats().observed, data.length * 2);
+});
+
+test('zip: huỷ một lần đọc không huỷ entry khác, không trả kết quả sau khi huỷ', async () => {
+  const { randomBytes } = await import('node:crypto');
+  const a = randomBytes(3 * 1024 * 1024).toString('base64');
+  const b = 'b'.repeat(4096);
+  const zip = await openZip(await buildZip([
+    { name: 'a.bin', data: a },
+    { name: 'b.txt', data: b },
+  ]), { limits: limits({ maxEntryBytes: 8 * 1024 * 1024, maxTotalUncompressedBytes: 16 * 1024 * 1024 }) });
+  const controller = new AbortController();
+  const pending = zip.read('a.bin', { signal: controller.signal });
+  setTimeout(() => controller.abort(), 2);
+  const other = zip.read('b.txt');
+  await assert.rejects(pending, error => error.reason === ZIP_ERRORS.CANCELLED);
+  assert.equal(text(await other), b);
+});
+
+test('zip: close khi đang chờ đọc thì read bị từ chối, không treo', async () => {
+  const zip = await openZip(await buildZip([{ name: 'a.txt', data: 'x'.repeat(4096) }]));
+  const pending = zip.read('a.txt');
+  zip.close();
+  await assert.rejects(pending, error => error.reason === ZIP_ERRORS.MALFORMED);
+});
+
+test('zip: central directory trỏ sai local header bị từ chối', async () => {
+  const bytes = await buildZip([
+    { name: 'a.txt', data: 'a' },
+    { name: 'b.txt', data: 'b' },
+  ]);
+  const view = new DataView(bytes.buffer);
+  const offsets = [];
+  for (let i = 0; i + 4 <= bytes.length; i++) if (view.getUint32(i, true) === 0x02014b50) offsets.push(i);
+  assert.equal(offsets.length, 2);
+  view.setUint32(offsets[1] + 42, 0, true); // trỏ vào local header của a.txt
+  await assert.rejects(() => openZip(bytes), error => error.code === 'PARSER_ERROR');
+});
+
+test('zip: tên entry không phải UTF-8 bị từ chối', async () => {
+  const bytes = await buildZip([{ name: 'a.txt', data: 'x' }]);
+  const view = new DataView(bytes.buffer);
+  bytes[30] = 0xFF; // local header name
+  const cd = view.getUint32(view.getUint32(bytes.length - 6, true) + 16, true);
+  bytes[cd + 46] = 0xFF; // central directory name
+  await assert.rejects(() => openZip(bytes), error => error.code === 'PARSER_ERROR');
+});

@@ -29,19 +29,29 @@ Giới hạn là hằng `Object.freeze`, UI không được vượt.
 - Đọc central directory, kiểm số entry, tên entry (`..`, đường dẫn tuyệt đối, `\`, NUL, tên quá
   dài, trùng tên), kiểu nén (chỉ stored/deflate), ZIP64, entry mã hoá, kích thước khai báo, tỉ lệ
   nở và tổng ngân sách.
+- **Cấu trúc được kiểm ngay khi mở**: mọi local header, độ dài tên/extra, khoảng dữ liệu nằm trước
+  central directory; khoảng của hai entry chồng nhau ⇒ `overlapping_data`. Central directory trỏ
+  sai local header bị từ chối. Tên entry phải là UTF-8 hợp lệ, không còn fallback latin1.
+- **Đọc tuần tự có ngân sách**: một promise queue cho toàn archive; mỗi lần đọc tính `maxBytes`
+  riêng tại thời điểm chạy, không còn `budget.entryLimit` dùng chung nên hai lần đọc đồng thời
+  không ghi đè giới hạn của nhau. Tổng byte quan sát vẫn là ngân sách chung của archive.
 - Giải nén **streaming**: đếm byte thật theo từng chunk, gọi `reader.cancel()` ngay khi vượt
   `maxEntryBytes` hoặc tổng `maxTotalUncompressedBytes` — không buffer cả entry rồi mới kiểm.
-- CRC32 và kích thước thật được đối chiếu với metadata; metadata sai ⇒ `PARSER_ERROR` chứ không
-  tin theo khai báo.
-- Deadline + `AbortSignal` được kiểm trong vòng đọc chunk; archive bị cắt cụt / central directory
-  hỏng bị từ chối.
+- `AbortSignal` của archive và `signal` riêng của từng lần đọc được hợp nhất; abort gọi
+  `reader.cancel()` trên reader đang hoạt động, listener được gỡ, lỗi race được đổi thành
+  `cancelled`, và signal được kiểm lại sau vòng đọc. Huỷ một entry không huỷ entry khác.
+- CRC32 và kích thước thật được đối chiếu với metadata; metadata sai ⇒ `PARSER_ERROR`.
 - Tỉ lệ nở chỉ áp cho entry > 1 MB (tránh false positive với file text nhỏ nén tốt).
 
 ## XML (`packages/core/xml.js`)
 
 Tokenizer + parser thật, dùng cho **mọi** part OOXML được đọc (main, comments, relationships,
-notes, worksheet, styles, shared strings…):
+notes, worksheet, styles, shared strings…). `readPart` đọc bytes qua ZIP với
+`maxBytes = maxXmlBytes` trước khi decode, nên part quá lớn bị cắt ngay trong lúc inflate.
 
+- `parseXml` nhận cả string và `Uint8Array`; **giới hạn là byte UTF-8**, không phải `length`
+  của chuỗi UTF-16. UTF-8 không hợp lệ, BOM UTF-16/UTF-32, control character XML 1.0 và surrogate
+  lẻ bị từ chối; BOM UTF-8 được bỏ.
 - từ chối `<!DOCTYPE`, `<!ENTITY`, mọi khai báo `<!…` khác, processing instruction không hợp lệ;
 - chỉ giải mã 5 entity định nghĩa sẵn + numeric ref, entity lạ ⇒ lỗi (XXE bất khả thi về cấu trúc);
 - giới hạn byte, độ sâu, số node, số thuộc tính, độ dài text; thuộc tính trùng / thẻ không khớp bị từ chối;
@@ -57,11 +67,24 @@ và bị cắt khi vượt `maxPdfStreamBytes`.
 ## C2PA / provenance (`packages/core/c2pa.js`)
 
 - Tìm container (JPEG APP11 / PNG `caBX`), parse JUMBF, đọc COSE_Sign1 và x5chain.
-- Xác minh chữ ký thật (ES256/384/512, RS256, PS256/384/512) và hard-binding SHA-256 của asset
-  (có xử lý exclusion `c2pa.hash.data`).
-- **Không** validate chain tới root CA, không CRL/OCSP, không timestamp. Trust store mặc định rỗng;
-  UI phân biệt `signature_valid_untrusted` với `verified_trusted`.
-- Trạng thái `asset_modified_after_signing` chỉ ra file đã đổi sau khi ký.
+- **Ngân sách tập trung** (`C2PA_LIMITS`): asset 100 MB; manifest 4 MB; một box 4 MB; 512 box;
+  depth JUMBF 12; CBOR depth 24, 50 000 item, collection 5 000, chuỗi 1 MB; exclusion 100;
+  chứng chỉ 64 KB, chain 8, tổng 256 KB; thời gian 3 000 ms.
+- PNG `caBX` và JPEG APP11 kiểm độ dài/cộng dồn trước khi cấp phát; chunk vượt biên, segment
+  hỏng, tổng payload vượt ngân sách ⇒ `manifest_invalid`, không trả manifest parse dở.
+- JUMBF: kiểm LBox/XLBox, biên, box tối thiểu, số box, depth, label UTF-8; lỗi cấu trúc ném lỗi
+  thay vì dừng im lặng.
+- CBOR: budget dùng chung cho definite **và** indefinite; kiểm length với số byte còn lại trước khi
+  lặp; UTF-8 fatal; key trùng bị từ chối; trailing bytes bị từ chối ở payload bảo mật.
+- COSE: `alg` **phải** nằm trong protected header; `alg` unprotected mâu thuẫn bị từ chối;
+  `alg` hiện chỉ hỗ trợ ES256 (thuật toán chưa có fixture kiểm thử bị trả `unsupported`).
+- Hard binding: exclusion phải là số nguyên không âm, nằm trong asset, không chồng lấn; thuật toán
+  hash chỉ `sha256/sha384/sha512`; exclusion hỏng ⇒ `manifest_invalid`, không clamp.
+- **Không** validate chain tới root CA, không CRL/OCSP, không timestamp. Ghim fingerprint/cert
+  của người dùng trả `signature_valid_pinned` (tin cậy tường minh ở lá), **không** phải
+  `verified_trusted`; `chainStatus = "not_evaluated"` luôn được trả về.
+- Trạng thái `asset_modified_after_signing` chỉ ra file đã đổi sau khi ký; chứng chỉ hết hạn có
+  trạng thái riêng `certificate_expired`.
 - Không xoá metadata provenance khi làm sạch văn bản; không suy ra tác giả từ việc thiếu metadata.
 
 ## API key và Base URL
@@ -84,27 +107,31 @@ Bắt buộc: `storage`, `activeTab`, `scripting`, `sidePanel`; host permissions
 `optional_host_permissions`: `https://*/*`, `http://localhost/*`, `http://127.0.0.1/*` — Chrome chỉ
 cấp origin cụ thể khi người dùng bấm Lưu cấu hình và chấp nhận hộp thoại.
 
-Content script chạy trên `http://*/*` và `https://*/*` (đã bỏ `file://`, `ftp://`, `<all_urls>`).
-Lý do vẫn rộng: phím `Alt+Shift+S` và sidebar nổi phải hoạt động trên trang đang đọc mà không cần
-bấm icon. Đã đo bằng Chrome E2E (`tests/e2e/extension.spec.js`): content script chỉ dựng DOM khi
-người dùng mở, không chặn/không sửa nút của trang. Migration sang `activeTab` + `commands` vẫn là
-việc của phiên bản sau vì Playwright không kích hoạt được phím tắt cấp trình duyệt một cách đáng tin
-— thu hẹp quyền lúc này sẽ là thu hẹp chưa được kiểm chứng.
+**Không có `content_scripts` tĩnh.** Trang không bị chèn script khi tải. Command
+`Alt+Shift+F` (`toggle-floating`) lấy tab đang active rồi mới `chrome.scripting.executeScript`
+các file `core/bundle.js`, `config.js`, `sidebar.js`, `content.js`, sau đó gửi message
+`toggle`. `content.js` tự chống chèn trùng (`__traceCleanerLoaded`), nên nhiều lần kích hoạt
+không tạo host/listener thứ hai. Tab `chrome://`, Web Store, `file://` và scheme khác bị từ chối
+với badge cảnh báo; không fallback sang chèn mù.
 
-Rủi ro còn lại: content script đọc được nội dung trang https bất kỳ khi người dùng mở sidebar; mã
-extension là mã cục bộ, không tải code từ xa.
+Giới hạn kiểm chứng: hộp thoại cấp quyền và phím tắt cấp trình duyệt không điều khiển được bằng
+Playwright. E2E dùng bản copy manifest có sẵn host `https://example.test/*` và gọi đúng chuỗi
+`executeScript` + `toggle` mà command dùng; việc Chrome nhận phím tắt `Alt+Shift+F` và hiện hộp
+thoại quyền là hành vi trình duyệt **chưa được tự động hoá**.
 
 ## Rủi ro còn lại (chưa xử lý)
 
 1. DOCX: comment được đọc, nhưng reply/thread và `w:moveFrom`/`w:moveTo` chỉ được ghi nhận như
    revision thường, không dựng lại thành cây chuyển đoạn.
-2. PDF: reading order là xấp xỉ theo toán tử text; không hỗ trợ LZW/JPX/CCITT, không OCR, không giải mã.
-3. C2PA: không validate chain/CRL/OCSP/timestamp; trust store của web mặc định rỗng.
-4. Parser chạy trên main thread (đã tối ưu để DOCX 3000 đoạn ≈ 34 ms, nhưng file sát trần vẫn có thể
-   gây giật); chưa chuyển sang Worker.
+2. PDF: vẫn là parser tự viết (xref/object stream/Flate/ToUnicode). Chưa migrate sang PDF.js; không
+   hỗ trợ LZW/JPX/CCITT, không OCR, không giải mã. Corpus PDF/DOCX/PPTX/XLSX độc lập chưa có.
+3. C2PA: không validate chain/CRL/OCSP/timestamp; chỉ ES256 có fixture. Chưa có fixture C2PA độc lập.
+4. **Parser vẫn chạy trên main thread.** Deadline là kiểm tra hợp tác trong vòng lặp, không dừng
+   được một đoạn synchronous đang chạy; chưa có Worker + terminate-based timeout.
 5. Không có CSP riêng cho extension; dựa vào CSP mặc định của MV3.
 6. Web app render nội dung bằng `textContent`/`createElement` (không `innerHTML` cho dữ liệu model),
    nhưng guide tĩnh vẫn dùng `innerHTML` từ nguồn tin cậy trong repo.
+7. Writing evaluation vẫn là 30 fixture tự soạn (20 dev + 10 held-out), chưa đạt 400 case.
 
 ## Báo cáo lỗi
 

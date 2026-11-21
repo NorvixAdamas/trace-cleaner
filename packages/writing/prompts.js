@@ -12,7 +12,7 @@
  *  4. Không bịa thông tin; nói rõ khi không chắc.
  */
 
-export const PROMPT_VERSION = '2.3.0';
+export const PROMPT_VERSION = '2.3.1';
 
 /** Quy tắc bảo toàn, đứng đầu mọi prompt. */
 export const PRESERVATION_RULES = Object.freeze([

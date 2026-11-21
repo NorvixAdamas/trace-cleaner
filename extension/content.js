@@ -6,12 +6,16 @@
 
   let host = null, shadow = null, ui = null, lastEditable = null;
 
+  const editable = t => Boolean(t) && (t.isContentEditable || t.tagName === "TEXTAREA"
+    || (t.tagName === "INPUT" && /^(text|search|url|email|tel|)$/i.test(t.type || "text")));
+
+  // Chèn sau khi người dùng đã focus ô nhập: giữ ô đó làm đích mặc định.
+  if (editable(document.activeElement)) lastEditable = document.activeElement;
+
   document.addEventListener("focusin", e => {
     const t = e.target;
     if (!t || t === host) return;
-    if (t.isContentEditable) lastEditable = t;
-    else if (t.tagName === "TEXTAREA") lastEditable = t;
-    else if (t.tagName === "INPUT" && /^(text|search|url|email|tel|)$/i.test(t.type || "text")) lastEditable = t;
+    if (editable(t)) lastEditable = t;
   }, true);
 
   // Key mặc định chỉ ở chrome.storage.session; local chỉ khi người dùng tick ghi nhớ.

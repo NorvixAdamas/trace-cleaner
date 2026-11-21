@@ -61,6 +61,40 @@ function openFallback(tab) {
   } catch { done(); }
 }
 
+/* ─────────── sidebar nổi: chỉ chèn sau thao tác người dùng ─────────── */
+
+// Không có content_scripts tĩnh: tab chỉ nhận bundle khi người dùng bấm phím tắt
+// hoặc gọi action. content.js tự chống chèn trùng bằng cờ __traceCleanerLoaded.
+async function injectFloating(tab) {
+  if (!tab || tab.id == null) return { ok: false, error: "không có tab đích" };
+  const url = String(tab.url || "");
+  if (!/^https?:/i.test(url)) {
+    return { ok: false, error: "Chrome không cho chèn script vào trang này." };
+  }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["core/bundle.js", "config.js", "sidebar.js", "content.js"],
+    });
+    await chrome.tabs.sendMessage(tab.id, { type: "toggle" });
+    return { ok: true };
+  } catch (error) {
+    const message = (error && error.message) || "không chèn được sidebar";
+    console.warn("[trace] inject:", message);
+    return { ok: false, error: message };
+  }
+}
+
+chrome.commands.onCommand.addListener(async command => {
+  if (command !== "toggle-floating") return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const result = await injectFloating(tab);
+  if (!result.ok && tab && tab.id != null) {
+    try { await chrome.action.setBadgeText({ tabId: tab.id, text: "!" }); } catch {}
+    setTimeout(() => { try { chrome.action.setBadgeText({ tabId: tab.id, text: "" }); } catch {} }, 3000);
+  }
+});
+
 /* ─────────── prompt ─────────── */
 
 /** Prompt gửi đi: prompt người dùng nếu có, cộng mệnh đề Markdown; ngược lại lấy registry. */

@@ -50,6 +50,54 @@ export function xmlError(reason, detail) {
 
 const PREDEFINED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 
+/** Độ dài UTF-8 thật, không cấp phát bản encode. */
+export function utf8ByteLength(value) {
+  const source = String(value ?? '');
+  let bytes = 0;
+  for (let i = 0; i < source.length; i++) {
+    const code = source.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xD800 && code <= 0xDBFF && i + 1 < source.length
+      && source.charCodeAt(i + 1) >= 0xDC00 && source.charCodeAt(i + 1) <= 0xDFFF) {
+      bytes += 4;
+      i += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+/**
+ * Chuẩn hoá input XML thành string, áp giới hạn BYTE trước khi decode.
+ * Chính sách encoding: UTF-8 (có/không BOM). UTF-16/UTF-32 bị từ chối rõ ràng
+ * thay vì decode mò; OOXML trong thực tế là UTF-8/ASCII.
+ */
+export function decodeXmlInput(input, { maxBytes = PARSER_LIMITS.maxXmlBytes, name = 'xml' } = {}) {
+  if (input instanceof Uint8Array) {
+    if (input.byteLength > maxBytes) throw xmlError(XML_ERRORS.TOO_LARGE, `${name}: ${input.byteLength} > ${maxBytes} byte`);
+    if (input.length >= 2 && ((input[0] === 0xFF && input[1] === 0xFE) || (input[0] === 0xFE && input[1] === 0xFF))) {
+      throw xmlError(XML_ERRORS.MALFORMED, `${name}: UTF-16 không được hỗ trợ`);
+    }
+    let text;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(input); }
+    catch { throw xmlError(XML_ERRORS.MALFORMED, `${name}: byte không phải UTF-8 hợp lệ`); }
+    return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+  }
+  const source = String(input ?? '');
+  const bytes = utf8ByteLength(source);
+  if (bytes > maxBytes) throw xmlError(XML_ERRORS.TOO_LARGE, `${name}: ${bytes} > ${maxBytes} byte`);
+  return source.charCodeAt(0) === 0xFEFF ? source.slice(1) : source;
+}
+
+/** Ký tự không hợp lệ trong XML 1.0 và surrogate lẻ. */
+function assertXmlCharacters(source, name) {
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(source)) {
+    throw xmlError(XML_ERRORS.MALFORMED, `${name}: control character không hợp lệ`);
+  }
+  const pair = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  if (pair.test(source)) throw xmlError(XML_ERRORS.MALFORMED, `${name}: surrogate lẻ`);
+}
+
 function isNameStart(ch) {
   return /[A-Za-z_:\u00C0-\uFFFF]/.test(ch);
 }
@@ -131,15 +179,14 @@ export function parseXml(text, options = {}) {
   const limits = options.limits || PARSER_LIMITS;
   const name = options.name || 'xml';
   const maxBytes = options.maxBytes || limits.maxXmlBytes;
-  const source = String(text ?? '');
-  if (source.length > maxBytes) throw xmlError(XML_ERRORS.TOO_LARGE, `${name}: ${source.length} > ${maxBytes}`);
-
+  const source = decodeXmlInput(text, { maxBytes, name });
+  assertXmlCharacters(source, name);
   let i = 0;
   const n = source.length;
   const stack = [];
   let root = null;
   const lineAt = lineCounter(source);
-  const stats = { nodes: 0, depth: 0, attrs: 0, textLength: 0, bytes: source.length };
+  const stats = { nodes: 0, depth: 0, attrs: 0, textLength: 0, bytes: utf8ByteLength(source) };
 
   const top = () => (stack.length ? stack[stack.length - 1] : null);
   const addText = value => {

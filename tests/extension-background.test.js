@@ -46,6 +46,7 @@ function loadWorker({ fetchImpl } = {}) {
       },
       sidePanel: { setPanelBehavior: () => Promise.resolve(), open: () => Promise.resolve() },
       action: { onClicked: { addListener() {} } },
+      commands: { onCommand: { addListener() {} } },
       tabs: { create() {}, sendMessage() {} },
       scripting: { executeScript() {} },
     },
@@ -81,7 +82,7 @@ test('humanize trả text + preservation và requestId', async () => {
   assert.equal(reply.requestId, 'req_a');
   assert.equal(reply.preservation.failed, false);
   assert.equal(reply.preservation.issues.length, 0);
-  assert.equal(reply.promptVersion, '2.3.0');
+  assert.equal(reply.promptVersion, '2.3.1');
 });
 
 test('key sai → cùng mã PROVIDER_AUTH_ERROR như web', async () => {

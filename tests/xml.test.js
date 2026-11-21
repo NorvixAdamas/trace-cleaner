@@ -123,3 +123,26 @@ test('xml: element rỗng tự đóng không tăng depth', () => {
   const { stats } = parseXml('<a><b/><c/></a>');
   assert.equal(stats.depth, 1);
 });
+
+test('xml: giới hạn byte là UTF-8 thật, không phải độ dài chuỗi', () => {
+  assert.throws(() => parseXml('<r>ééé</r>', { maxBytes: 12 }), error => error.reason === XML_ERRORS.TOO_LARGE);
+  assert.doesNotThrow(() => parseXml('<r>ééé</r>', { maxBytes: 14 }));
+});
+
+test('xml: nhận Uint8Array UTF-8, từ chối byte không hợp lệ và UTF-16', () => {
+  const good = new TextEncoder().encode('<r>xin chào</r>');
+  assert.equal(parseXml(good).root.name, 'r');
+  assert.throws(() => parseXml(new Uint8Array([0x3C, 0xFF, 0x3E])), error => error.reason === XML_ERRORS.MALFORMED);
+  assert.throws(() => parseXml(new Uint8Array([0xFF, 0xFE, 0x3C, 0x00])), error => error.reason === XML_ERRORS.MALFORMED);
+});
+
+test('xml: BOM bị bỏ, control character và surrogate lẻ bị từ chối', () => {
+  assert.equal(parseXml('\uFEFF<r/>').root.name, 'r');
+  assert.throws(() => parseXml('<r>\u0001</r>'), error => error.reason === XML_ERRORS.MALFORMED);
+  assert.throws(() => parseXml('<r>\uD800</r>'), error => error.reason === XML_ERRORS.MALFORMED);
+});
+
+test('xml: stats.bytes báo byte UTF-8 thật', () => {
+  const { stats } = parseXml('<r>é</r>');
+  assert.equal(stats.bytes, 9);
+});

@@ -27,6 +27,7 @@ export const ZIP_ERRORS = Object.freeze({
   SIZE_MISMATCH: 'size_mismatch',
   CRC_MISMATCH: 'crc_mismatch',
   DUPLICATE_ENTRY: 'duplicate_entry',
+  OVERLAP: 'overlapping_data',
   UNSAFE_NAME: 'unsafe_name',
   CANCELLED: 'cancelled',
   TIMEOUT: 'timeout',
@@ -49,6 +50,7 @@ const ERROR_TEXT = {
   [ZIP_ERRORS.SIZE_MISMATCH]: 'Kích thước giải nén thật khác metadata khai báo.',
   [ZIP_ERRORS.CRC_MISMATCH]: 'CRC32 không khớp — entry bị hỏng hoặc bị sửa.',
   [ZIP_ERRORS.DUPLICATE_ENTRY]: 'Archive có hai entry trùng tên.',
+  [ZIP_ERRORS.OVERLAP]: 'Dữ liệu hai entry chồng lấn hoặc nằm ngoài vùng dữ liệu.',
   [ZIP_ERRORS.UNSAFE_NAME]: 'Tên entry không an toàn (đường dẫn tuyệt đối hoặc `..`).',
   [ZIP_ERRORS.CANCELLED]: 'Đã huỷ khi đang giải nén.',
   [ZIP_ERRORS.TIMEOUT]: 'Quá thời gian cho phép khi giải nén.',
@@ -108,11 +110,28 @@ function checkSignal(signal) {
   if (signal && signal.aborted) throw zipError(ZIP_ERRORS.CANCELLED);
 }
 
+/** Hợp nhất signal của archive và signal riêng của một lần đọc. */
+function mergeSignals(a, b) {
+  if (!a) return b || null;
+  if (!b || a === b) return a;
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([a, b]);
+  }
+  const merged = new AbortController();
+  const forward = () => { try { merged.abort(); } catch { /* đã huỷ */ } };
+  if (a.aborted || b.aborted) forward();
+  else {
+    a.addEventListener('abort', forward, { once: true });
+    b.addEventListener('abort', forward, { once: true });
+  }
+  return merged.signal;
+}
+
 /**
  * Giải nén một entry với ngân sách được áp theo từng chunk.
  * @returns {Promise<Uint8Array>}
  */
-async function inflateBounded(raw, { limits, budget, signal, deadline, name }) {
+async function inflateBounded(raw, { limits, budget, signal, deadline, name, maxBytes, isClosed }) {
   if (typeof DecompressionStream !== 'function') {
     throw zipError(ZIP_ERRORS.UNSUPPORTED_METHOD, 'môi trường không có DecompressionStream');
   }
@@ -120,58 +139,68 @@ async function inflateBounded(raw, { limits, budget, signal, deadline, name }) {
   const reader = stream.getReader();
   const chunks = [];
   let total = 0;
+  /* Abort phải tác động lên reader đang chờ, không chỉ được kiểm giữa hai
+     vòng lặp: một chunk 64 KB vẫn có thể đang được inflate khi signal bắn. */
+  const onAbort = () => { try { reader.cancel(); } catch { /* đã đóng */ } };
+  if (signal) signal.addEventListener('abort', onAbort, { once: true });
   try {
     for (;;) {
       checkSignal(signal);
       checkDeadline(deadline);
+      if (isClosed && isClosed()) throw zipError(ZIP_ERRORS.MALFORMED, 'archive đã đóng khi đang đọc');
       const { done, value } = await reader.read();
       if (done) break;
+      checkSignal(signal);
       total += value.byteLength;
-      if (total > limits.maxEntryBytes) {
-        throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, `${name}: > ${limits.maxEntryBytes} byte`);
+      if (total > maxBytes) {
+        throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, `${name}: > ${maxBytes} byte`);
       }
       if (budget.observed + total > limits.maxTotalUncompressedBytes) {
         throw zipError(ZIP_ERRORS.ARCHIVE_TOO_LARGE, `${budget.observed + total} byte`);
-      }
-      // Trần theo ngân sách còn lại: cắt ngay, không chờ hết entry.
-      if (budget.entryLimit && total > budget.entryLimit) {
-        throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, `${name}: > ${budget.entryLimit} byte`);
       }
       chunks.push(value);
     }
   } catch (error) {
     // Huỷ phần còn lại: DecompressionStream dừng thật, không chạy tiếp ngầm.
     try { await reader.cancel(); } catch { /* reader đã đóng */ }
+    if (signal && signal.aborted && error && error.reason !== ZIP_ERRORS.CANCELLED) {
+      throw zipError(ZIP_ERRORS.CANCELLED, name);
+    }
     throw error;
+  } finally {
+    if (signal) signal.removeEventListener('abort', onAbort);
   }
+  checkSignal(signal);
   budget.observed += total;
   return concatChunks(chunks, total);
 }
 
 /** Đọc entry stored theo chunk, vẫn đếm và vẫn kiểm tra biên. */
-async function copyBounded(raw, { limits, budget, signal, deadline, name }) {
+async function copyBounded(raw, { limits, budget, signal, deadline, name, maxBytes, isClosed }) {
   const chunks = [];
   let total = 0;
   for (let offset = 0; offset < raw.length; offset += 65536) {
     checkSignal(signal);
     checkDeadline(deadline);
+    if (isClosed && isClosed()) throw zipError(ZIP_ERRORS.MALFORMED, 'archive đã đóng khi đang đọc');
     const chunk = raw.subarray(offset, Math.min(offset + 65536, raw.length));
     total += chunk.byteLength;
-    if (total > limits.maxEntryBytes) throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, `${name}: > ${limits.maxEntryBytes} byte`);
+    if (total > maxBytes) throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, `${name}: > ${maxBytes} byte`);
     if (budget.observed + total > limits.maxTotalUncompressedBytes) {
       throw zipError(ZIP_ERRORS.ARCHIVE_TOO_LARGE, `${budget.observed + total} byte`);
     }
-    if (budget.entryLimit && total > budget.entryLimit) throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, name);
     chunks.push(chunk);
   }
+  checkSignal(signal);
   budget.observed += total;
   return concatChunks(chunks, total);
 }
 
 function decodeName(u8) {
-  try { return new TextDecoder('utf-8', { fatal: true }).decode(u8); } catch {
-    return new TextDecoder('latin1').decode(u8);
-  }
+  /* OOXML yêu cầu tên part là UTF-8/ASCII. Trước đây rơi về latin1 khi decode
+     lỗi, tức là chấp nhận tên không hợp lệ và có thể né kiểm tra traversal. */
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(u8); }
+  catch { throw zipError(ZIP_ERRORS.MALFORMED, 'tên entry không phải UTF-8 hợp lệ'); }
 }
 
 /**
@@ -265,40 +294,63 @@ export async function openZip(input, options = {}) {
     entries.push(entry);
   }
 
-  const budget = { observed: 0, entryLimit: 0 };
-  let closed = false;
+  /* Kiểm tra local header + vùng dữ liệu NGAY khi mở, dùng một lần cho mọi
+     read: offset/length khai báo trong central directory không được tin mà
+     không đối chiếu, và hai entry không được chồng lấn hay lấn central dir. */
+  const ranges = [];
+  for (const entry of entries) {
+    if (entry.lho + 30 > cdOffset) throw zipError(ZIP_ERRORS.OVERLAP, `${entry.name}: local header sau central directory`);
+    if (dv.getUint32(entry.lho, true) !== 0x04034b50) throw zipError(ZIP_ERRORS.MALFORMED, `local header ${entry.name}`);
+    if (dv.getUint16(entry.lho + 8, true) !== entry.method) throw zipError(ZIP_ERRORS.MALFORMED, `method lệch ở ${entry.name}`);
+    const nameLen = dv.getUint16(entry.lho + 26, true);
+    const extraLen = dv.getUint16(entry.lho + 28, true);
+    if (entry.lho + 30 + nameLen + extraLen > cdOffset) throw zipError(ZIP_ERRORS.TRUNCATED, `local header ${entry.name}`);
+    const localName = decodeName(u8.subarray(entry.lho + 30, entry.lho + 30 + nameLen));
+    if (localName !== entry.name) throw zipError(ZIP_ERRORS.MALFORMED, `tên lệch ở ${entry.name}`);
+    const start = entry.lho + 30 + nameLen + extraLen;
+    const end = start + entry.compressedSize;
+    if (end > cdOffset) throw zipError(ZIP_ERRORS.TRUNCATED, `dữ liệu ${entry.name}`);
+    entry.dataStart = start;
+    ranges.push({ name: entry.name, start, end });
+  }
+  ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 1; i < ranges.length; i++) {
+    if (ranges[i].start < ranges[i - 1].end) {
+      throw zipError(ZIP_ERRORS.OVERLAP, `${ranges[i - 1].name} ↔ ${ranges[i].name}`);
+    }
+  }
 
-  async function read(name, opts = {}) {
+  const budget = { observed: 0 };
+  let closed = false;
+  /* Hàng đợi tuần tự: ngân sách archive là trạng thái dùng chung, nên mỗi lần
+     đọc phải thấy `observed` đã cập nhật của lần trước. Không cache, không
+     hàng đợi dài vô hạn ngoài số promise caller tự tạo. */
+  let queue = Promise.resolve();
+
+  async function readEntry(name, opts = {}) {
     if (closed) throw zipError(ZIP_ERRORS.MALFORMED, 'archive đã đóng');
     const entry = map.get(name);
     if (!entry) return null; // part không bắt buộc: caller quyết định
-    checkSignal(signal);
+    const readSignal = mergeSignals(signal, opts.signal);
+    checkSignal(readSignal);
     checkDeadline(deadline);
-    if (entry.lho + 30 > u8.length) throw zipError(ZIP_ERRORS.TRUNCATED, name);
-    if (dv.getUint32(entry.lho, true) !== 0x04034b50) throw zipError(ZIP_ERRORS.MALFORMED, `local header ${name}`);
-    const localMethod = dv.getUint16(entry.lho + 8, true);
     const localFlags = dv.getUint16(entry.lho + 6, true);
-    const nameLen = dv.getUint16(entry.lho + 26, true);
-    const extraLen = dv.getUint16(entry.lho + 28, true);
-    const start = entry.lho + 30 + nameLen + extraLen;
+    const start = entry.dataStart;
     if (start + entry.compressedSize > u8.length) throw zipError(ZIP_ERRORS.TRUNCATED, `dữ liệu ${name}`);
     if ((localFlags & 0x1) || (entry.flags & 0x1)) throw zipError(ZIP_ERRORS.ENCRYPTED, name);
-    if (localMethod !== entry.method) throw zipError(ZIP_ERRORS.MALFORMED, `method lệch ở ${name}`);
-    const localName = decodeName(u8.subarray(entry.lho + 30, entry.lho + 30 + nameLen));
-    if (localName !== entry.name) throw zipError(ZIP_ERRORS.MALFORMED, `tên lệch ở ${name}`);
     const raw = u8.subarray(start, start + entry.compressedSize);
 
     const remaining = limits.maxTotalUncompressedBytes - budget.observed;
-    budget.entryLimit = Math.min(
+    const maxBytes = Math.min(
       limits.maxEntryBytes,
       Number.isFinite(opts.maxBytes) && opts.maxBytes > 0 ? opts.maxBytes : limits.maxEntryBytes,
       remaining,
     );
-    if (budget.entryLimit <= 0) throw zipError(ZIP_ERRORS.ARCHIVE_TOO_LARGE);
+    if (maxBytes <= 0) throw zipError(ZIP_ERRORS.ARCHIVE_TOO_LARGE);
 
     const out = entry.method === 8
-      ? await inflateBounded(raw, { limits, budget, signal, deadline, name })
-      : await copyBounded(raw, { limits, budget, signal, deadline, name });
+      ? await inflateBounded(raw, { limits, budget, signal: readSignal, deadline, name, maxBytes, isClosed: () => closed })
+      : await copyBounded(raw, { limits, budget, signal: readSignal, deadline, name, maxBytes, isClosed: () => closed });
 
     if (out.byteLength !== entry.size) {
       throw zipError(ZIP_ERRORS.SIZE_MISMATCH, `${name}: khai báo ${entry.size}, thật ${out.byteLength}`);
@@ -309,8 +361,13 @@ export async function openZip(input, options = {}) {
       throw zipError(ZIP_ERRORS.SUSPICIOUS_EXPANSION, `${name}: ${Math.round(out.byteLength / entry.compressedSize)}x thực tế`);
     }
     if (crc32(out) !== entry.crc) throw zipError(ZIP_ERRORS.CRC_MISMATCH, name);
-    budget.entryLimit = 0;
     return out;
+  }
+
+  function read(name, opts = {}) {
+    const task = queue.then(() => readEntry(name, opts));
+    queue = task.then(() => undefined, () => undefined);
+    return task;
   }
 
   async function readText(name, opts = {}) {

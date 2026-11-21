@@ -25,8 +25,8 @@ API key — xem [docs/PRIVACY.md](docs/PRIVACY.md).
 
 | Thành phần | Version |
 |---|---|
-| Sản phẩm (web + extension + CLI) | **2.3.0** |
-| Prompt registry (`PROMPT_VERSION`) | **2.3.0** — tách riêng khỏi version sản phẩm |
+| Sản phẩm (web + extension + CLI) | **2.3.1** |
+| Prompt registry (`PROMPT_VERSION`) | **2.3.1** — tách riêng khỏi version sản phẩm |
 | Engine (`ENGINE_VERSION`) | **2.3** |
 | Schema kết quả | `1.0` |
 
@@ -46,10 +46,10 @@ Bản công khai: `https://norvixadamas.github.io/trace-cleaner/`.
 `index.html` dùng **cùng engine với extension**: bundle sinh tự động từ `packages/core` được nhúng
 giữa marker `@generated:core:start/end`. Trang chỉ còn adapter mỏng, không có bản sao thuật toán.
 
-## Extension Chrome (MV3, v2.3.0)
+## Extension Chrome (MV3, v2.3.1)
 
 1. `chrome://extensions` → bật Developer mode → **Load unpacked** → chọn thư mục `extension/`.
-2. Bấm icon để mở Side Panel, hoặc `Alt+Shift+S` để mở sidebar nổi trên trang.
+2. Bấm icon để mở Side Panel. Sidebar nổi chỉ được chèn sau thao tác của bạn: `Alt+Shift+F` (command của extension) rồi `Alt+Shift+S` để bật/tắt.
 3. Nhập API key trong mục "API key & model". Mặc định key chỉ nằm trong `chrome.storage.session`
    (mất khi đóng trình duyệt); tick **"Ghi nhớ API key trên máy này"** mới ghi
    `chrome.storage.local`. Có nút **Xoá key**. Key cũ do bản ≤2.2 để lại trong local được chuyển
@@ -63,9 +63,10 @@ biến nằm trong `optional_host_permissions` và chỉ được cấp khi bạ
 đúng origin). Provider tự nhập phải là `https://` (hoặc `http://localhost` khi phát triển);
 background từ chối request nếu origin chưa được cấp quyền.
 
-Content script vẫn chạy trên `http(s)` (không `file://`) để `Alt+Shift+S` hoạt động trên mọi trang.
-Đây là trade-off đã được đo bằng Chrome E2E: sidebar không can thiệp nút của trang và chỉ dựng DOM
-khi người dùng mở. Chi tiết + hướng thu hẹp còn lại: [docs/SECURITY.md](docs/SECURITY.md).
+Không còn `content_scripts` tĩnh: trang không bị chèn script khi tải. Command `Alt+Shift+F` xin
+`activeTab` cho tab đang mở rồi mới chèn `core/bundle.js`, `config.js`, `sidebar.js`,
+`content.js`; chèn lại là idempotent (một host, một bộ listener). Trang Chrome nội bộ và
+`file://` bị từ chối. Chi tiết: [docs/SECURITY.md](docs/SECURITY.md).
 
 ## CLI
 
@@ -138,3 +139,10 @@ docs/                 kiến trúc, API, bảo mật, privacy, testing, audit, r
 - [docs/SECURITY.md](docs/SECURITY.md) · [docs/PRIVACY.md](docs/PRIVACY.md)
 - [docs/TESTING.md](docs/TESTING.md) · [docs/ROADMAP.md](docs/ROADMAP.md) · [docs/AUDIT.md](docs/AUDIT.md)
 - [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
+
+## Trạng thái hardening 2.3.1
+
+2.3.1 siết C2PA/CBOR, ZIP đồng thời/huỷ, giới hạn byte XML và bỏ chèn content script tĩnh.
+Các hạng mục còn mở (worker cách ly đầy đủ, PDF.js, corpus độc lập, 400 case writing) được ghi
+rõ là **chưa đạt** trong [docs/TRACE_CLEANER_2_3_1_RELEASE_REPORT.md](docs/TRACE_CLEANER_2_3_1_RELEASE_REPORT.md);
+không có tuyên bố release-ready cho các hạng mục đó.

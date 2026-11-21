@@ -116,11 +116,13 @@ export async function analyzeOoxml(input, options = {}) {
     if (!name || !zip.has(name)) { if (name) ctx.partsSkipped.push(name); return null; }
     checkDeadline(deadline);
     if (signal && signal.aborted) throw new Error('Đã huỷ khi đọc tài liệu.');
-    const text = await zip.readText(name);
+    // Đọc bytes và áp trần XML NGAY trong lúc inflate, trước khi decode.
+    const bytes = await zip.read(name, { maxBytes: limits.maxXmlBytes });
+    if (!bytes) { ctx.partsSkipped.push(name); return null; }
     ctx.partsRead.push(name);
-    const { root } = parseXml(text, { limits, name });
+    const { root } = parseXml(bytes, { limits, name });
     // Giữ raw main part để tính rsid (heuristic Word) mà không đọc lại zip.
-    if (keepRaw) ctx.mainXmlText = text;
+    if (keepRaw) ctx.mainXmlText = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
     return root;
   }
 
@@ -337,9 +339,9 @@ async function readDocx(zip, ctx, mainPart, mainRoot) {
 }
 
 async function readPartRoot(zip, ctx, name) {
-  const text = await zip.readText(name);
+  const bytes = await zip.read(name, { maxBytes: ctx.limits.maxXmlBytes });
   ctx.partsRead.push(name);
-  return parseXml(text, { limits: ctx.limits, name });
+  return parseXml(bytes, { limits: ctx.limits, name });
 }
 
 /* ───────────────────────── PPTX ───────────────────────── */

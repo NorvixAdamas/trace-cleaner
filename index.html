@@ -340,7 +340,7 @@
 </head>
 <body>
 <div class="topbar">
-  <div class="brand">Trace <b>Suite</b> <span style="font-weight:500;color:var(--dim);font-size:11px;letter-spacing:.02em">v2.3.0</span></div>
+  <div class="brand">Trace <b>Suite</b> <span style="font-weight:500;color:var(--dim);font-size:11px;letter-spacing:.02em">v2.3.1</span></div>
   <div class="switch">
     <button data-view="tool" class="on">Công cụ</button>
     <button data-view="guide">Guide 2026</button>
@@ -3268,20 +3268,36 @@ function xmlDepth(xml) {
  * Không có DTD/ENTITY: OOXML hợp lệ không cần, và entity là bề mặt tấn công.
  */
 function assertSafeXml(xml, { name = 'xml', limits = PARSER_LIMITS } = {}) {
-  const source = String(xml ?? '');
+  const bytes = xml instanceof Uint8Array ? xml.byteLength : utf8Size(String(xml ?? ''));
+  const source = xml instanceof Uint8Array ? '' : String(xml ?? '');
   const fail = (reason, detail) => {
     const error = new Error(`XML không an toàn (${reason}): ${detail || name}`);
     error.code = 'PARSER_ERROR';
     error.reason = reason;
     return error;
   };
-  if (source.length > limits.maxXmlBytes) throw fail('too_large', `${source.length} ký tự`);
+  if (bytes > limits.maxXmlBytes) throw fail('too_large', `${bytes} byte > ${limits.maxXmlBytes}`);
   if (/<!DOCTYPE/i.test(source)) throw fail('doctype', name);
   if (/<!ENTITY/i.test(source)) throw fail('entity_declaration', name);
   if (/SYSTEM\s+["'](?:https?|file):/i.test(source)) throw fail('external_entity', name);
   const depth = xmlDepth(source);
   if (depth > limits.maxXmlDepth) throw fail('too_deep', `${depth} > ${limits.maxXmlDepth}`);
   return true;
+}
+
+/** Độ dài UTF-8, không cấp phát bản encode. */
+function utf8Size(value) {
+  const source = String(value ?? '');
+  let bytes = 0;
+  for (let i = 0; i < source.length; i++) {
+    const code = source.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xD800 && code <= 0xDBFF && i + 1 < source.length
+      && source.charCodeAt(i + 1) >= 0xDC00 && source.charCodeAt(i + 1) <= 0xDFFF) { bytes += 4; i += 1; }
+    else bytes += 3;
+  }
+  return bytes;
 }
 
 /** Cắt văn bản trích ra để UI không render hàng chục MB. */
@@ -3291,7 +3307,7 @@ function clampText(text, limits = PARSER_LIMITS) {
   return { text: source.slice(0, limits.maxTextChars), truncated: true };
 }
 
-Object.assign(__exports, { PARSER_LIMITS, validateZipEntryName, checkZipBudget, xmlDepth, assertSafeXml, clampText });
+Object.assign(__exports, { PARSER_LIMITS, validateZipEntryName, checkZipBudget, xmlDepth, assertSafeXml, utf8Size, clampText });
 };
 
 __modules["core/zip.js"] = function (__exports) {
@@ -3325,6 +3341,7 @@ const ZIP_ERRORS = Object.freeze({
   SIZE_MISMATCH: 'size_mismatch',
   CRC_MISMATCH: 'crc_mismatch',
   DUPLICATE_ENTRY: 'duplicate_entry',
+  OVERLAP: 'overlapping_data',
   UNSAFE_NAME: 'unsafe_name',
   CANCELLED: 'cancelled',
   TIMEOUT: 'timeout',
@@ -3347,6 +3364,7 @@ const ERROR_TEXT = {
   [ZIP_ERRORS.SIZE_MISMATCH]: 'Kích thước giải nén thật khác metadata khai báo.',
   [ZIP_ERRORS.CRC_MISMATCH]: 'CRC32 không khớp — entry bị hỏng hoặc bị sửa.',
   [ZIP_ERRORS.DUPLICATE_ENTRY]: 'Archive có hai entry trùng tên.',
+  [ZIP_ERRORS.OVERLAP]: 'Dữ liệu hai entry chồng lấn hoặc nằm ngoài vùng dữ liệu.',
   [ZIP_ERRORS.UNSAFE_NAME]: 'Tên entry không an toàn (đường dẫn tuyệt đối hoặc `..`).',
   [ZIP_ERRORS.CANCELLED]: 'Đã huỷ khi đang giải nén.',
   [ZIP_ERRORS.TIMEOUT]: 'Quá thời gian cho phép khi giải nén.',
@@ -3406,11 +3424,28 @@ function checkSignal(signal) {
   if (signal && signal.aborted) throw zipError(ZIP_ERRORS.CANCELLED);
 }
 
+/** Hợp nhất signal của archive và signal riêng của một lần đọc. */
+function mergeSignals(a, b) {
+  if (!a) return b || null;
+  if (!b || a === b) return a;
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([a, b]);
+  }
+  const merged = new AbortController();
+  const forward = () => { try { merged.abort(); } catch { /* đã huỷ */ } };
+  if (a.aborted || b.aborted) forward();
+  else {
+    a.addEventListener('abort', forward, { once: true });
+    b.addEventListener('abort', forward, { once: true });
+  }
+  return merged.signal;
+}
+
 /**
  * Giải nén một entry với ngân sách được áp theo từng chunk.
  * @returns {Promise<Uint8Array>}
  */
-async function inflateBounded(raw, { limits, budget, signal, deadline, name }) {
+async function inflateBounded(raw, { limits, budget, signal, deadline, name, maxBytes, isClosed }) {
   if (typeof DecompressionStream !== 'function') {
     throw zipError(ZIP_ERRORS.UNSUPPORTED_METHOD, 'môi trường không có DecompressionStream');
   }
@@ -3418,58 +3453,68 @@ async function inflateBounded(raw, { limits, budget, signal, deadline, name }) {
   const reader = stream.getReader();
   const chunks = [];
   let total = 0;
+  /* Abort phải tác động lên reader đang chờ, không chỉ được kiểm giữa hai
+     vòng lặp: một chunk 64 KB vẫn có thể đang được inflate khi signal bắn. */
+  const onAbort = () => { try { reader.cancel(); } catch { /* đã đóng */ } };
+  if (signal) signal.addEventListener('abort', onAbort, { once: true });
   try {
     for (;;) {
       checkSignal(signal);
       checkDeadline(deadline);
+      if (isClosed && isClosed()) throw zipError(ZIP_ERRORS.MALFORMED, 'archive đã đóng khi đang đọc');
       const { done, value } = await reader.read();
       if (done) break;
+      checkSignal(signal);
       total += value.byteLength;
-      if (total > limits.maxEntryBytes) {
-        throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, `${name}: > ${limits.maxEntryBytes} byte`);
+      if (total > maxBytes) {
+        throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, `${name}: > ${maxBytes} byte`);
       }
       if (budget.observed + total > limits.maxTotalUncompressedBytes) {
         throw zipError(ZIP_ERRORS.ARCHIVE_TOO_LARGE, `${budget.observed + total} byte`);
-      }
-      // Trần theo ngân sách còn lại: cắt ngay, không chờ hết entry.
-      if (budget.entryLimit && total > budget.entryLimit) {
-        throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, `${name}: > ${budget.entryLimit} byte`);
       }
       chunks.push(value);
     }
   } catch (error) {
     // Huỷ phần còn lại: DecompressionStream dừng thật, không chạy tiếp ngầm.
     try { await reader.cancel(); } catch { /* reader đã đóng */ }
+    if (signal && signal.aborted && error && error.reason !== ZIP_ERRORS.CANCELLED) {
+      throw zipError(ZIP_ERRORS.CANCELLED, name);
+    }
     throw error;
+  } finally {
+    if (signal) signal.removeEventListener('abort', onAbort);
   }
+  checkSignal(signal);
   budget.observed += total;
   return concatChunks(chunks, total);
 }
 
 /** Đọc entry stored theo chunk, vẫn đếm và vẫn kiểm tra biên. */
-async function copyBounded(raw, { limits, budget, signal, deadline, name }) {
+async function copyBounded(raw, { limits, budget, signal, deadline, name, maxBytes, isClosed }) {
   const chunks = [];
   let total = 0;
   for (let offset = 0; offset < raw.length; offset += 65536) {
     checkSignal(signal);
     checkDeadline(deadline);
+    if (isClosed && isClosed()) throw zipError(ZIP_ERRORS.MALFORMED, 'archive đã đóng khi đang đọc');
     const chunk = raw.subarray(offset, Math.min(offset + 65536, raw.length));
     total += chunk.byteLength;
-    if (total > limits.maxEntryBytes) throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, `${name}: > ${limits.maxEntryBytes} byte`);
+    if (total > maxBytes) throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, `${name}: > ${maxBytes} byte`);
     if (budget.observed + total > limits.maxTotalUncompressedBytes) {
       throw zipError(ZIP_ERRORS.ARCHIVE_TOO_LARGE, `${budget.observed + total} byte`);
     }
-    if (budget.entryLimit && total > budget.entryLimit) throw zipError(ZIP_ERRORS.ENTRY_TOO_LARGE, name);
     chunks.push(chunk);
   }
+  checkSignal(signal);
   budget.observed += total;
   return concatChunks(chunks, total);
 }
 
 function decodeName(u8) {
-  try { return new TextDecoder('utf-8', { fatal: true }).decode(u8); } catch {
-    return new TextDecoder('latin1').decode(u8);
-  }
+  /* OOXML yêu cầu tên part là UTF-8/ASCII. Trước đây rơi về latin1 khi decode
+     lỗi, tức là chấp nhận tên không hợp lệ và có thể né kiểm tra traversal. */
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(u8); }
+  catch { throw zipError(ZIP_ERRORS.MALFORMED, 'tên entry không phải UTF-8 hợp lệ'); }
 }
 
 /**
@@ -3563,40 +3608,63 @@ async function openZip(input, options = {}) {
     entries.push(entry);
   }
 
-  const budget = { observed: 0, entryLimit: 0 };
-  let closed = false;
+  /* Kiểm tra local header + vùng dữ liệu NGAY khi mở, dùng một lần cho mọi
+     read: offset/length khai báo trong central directory không được tin mà
+     không đối chiếu, và hai entry không được chồng lấn hay lấn central dir. */
+  const ranges = [];
+  for (const entry of entries) {
+    if (entry.lho + 30 > cdOffset) throw zipError(ZIP_ERRORS.OVERLAP, `${entry.name}: local header sau central directory`);
+    if (dv.getUint32(entry.lho, true) !== 0x04034b50) throw zipError(ZIP_ERRORS.MALFORMED, `local header ${entry.name}`);
+    if (dv.getUint16(entry.lho + 8, true) !== entry.method) throw zipError(ZIP_ERRORS.MALFORMED, `method lệch ở ${entry.name}`);
+    const nameLen = dv.getUint16(entry.lho + 26, true);
+    const extraLen = dv.getUint16(entry.lho + 28, true);
+    if (entry.lho + 30 + nameLen + extraLen > cdOffset) throw zipError(ZIP_ERRORS.TRUNCATED, `local header ${entry.name}`);
+    const localName = decodeName(u8.subarray(entry.lho + 30, entry.lho + 30 + nameLen));
+    if (localName !== entry.name) throw zipError(ZIP_ERRORS.MALFORMED, `tên lệch ở ${entry.name}`);
+    const start = entry.lho + 30 + nameLen + extraLen;
+    const end = start + entry.compressedSize;
+    if (end > cdOffset) throw zipError(ZIP_ERRORS.TRUNCATED, `dữ liệu ${entry.name}`);
+    entry.dataStart = start;
+    ranges.push({ name: entry.name, start, end });
+  }
+  ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 1; i < ranges.length; i++) {
+    if (ranges[i].start < ranges[i - 1].end) {
+      throw zipError(ZIP_ERRORS.OVERLAP, `${ranges[i - 1].name} ↔ ${ranges[i].name}`);
+    }
+  }
 
-  async function read(name, opts = {}) {
+  const budget = { observed: 0 };
+  let closed = false;
+  /* Hàng đợi tuần tự: ngân sách archive là trạng thái dùng chung, nên mỗi lần
+     đọc phải thấy `observed` đã cập nhật của lần trước. Không cache, không
+     hàng đợi dài vô hạn ngoài số promise caller tự tạo. */
+  let queue = Promise.resolve();
+
+  async function readEntry(name, opts = {}) {
     if (closed) throw zipError(ZIP_ERRORS.MALFORMED, 'archive đã đóng');
     const entry = map.get(name);
     if (!entry) return null; // part không bắt buộc: caller quyết định
-    checkSignal(signal);
+    const readSignal = mergeSignals(signal, opts.signal);
+    checkSignal(readSignal);
     checkDeadline(deadline);
-    if (entry.lho + 30 > u8.length) throw zipError(ZIP_ERRORS.TRUNCATED, name);
-    if (dv.getUint32(entry.lho, true) !== 0x04034b50) throw zipError(ZIP_ERRORS.MALFORMED, `local header ${name}`);
-    const localMethod = dv.getUint16(entry.lho + 8, true);
     const localFlags = dv.getUint16(entry.lho + 6, true);
-    const nameLen = dv.getUint16(entry.lho + 26, true);
-    const extraLen = dv.getUint16(entry.lho + 28, true);
-    const start = entry.lho + 30 + nameLen + extraLen;
+    const start = entry.dataStart;
     if (start + entry.compressedSize > u8.length) throw zipError(ZIP_ERRORS.TRUNCATED, `dữ liệu ${name}`);
     if ((localFlags & 0x1) || (entry.flags & 0x1)) throw zipError(ZIP_ERRORS.ENCRYPTED, name);
-    if (localMethod !== entry.method) throw zipError(ZIP_ERRORS.MALFORMED, `method lệch ở ${name}`);
-    const localName = decodeName(u8.subarray(entry.lho + 30, entry.lho + 30 + nameLen));
-    if (localName !== entry.name) throw zipError(ZIP_ERRORS.MALFORMED, `tên lệch ở ${name}`);
     const raw = u8.subarray(start, start + entry.compressedSize);
 
     const remaining = limits.maxTotalUncompressedBytes - budget.observed;
-    budget.entryLimit = Math.min(
+    const maxBytes = Math.min(
       limits.maxEntryBytes,
       Number.isFinite(opts.maxBytes) && opts.maxBytes > 0 ? opts.maxBytes : limits.maxEntryBytes,
       remaining,
     );
-    if (budget.entryLimit <= 0) throw zipError(ZIP_ERRORS.ARCHIVE_TOO_LARGE);
+    if (maxBytes <= 0) throw zipError(ZIP_ERRORS.ARCHIVE_TOO_LARGE);
 
     const out = entry.method === 8
-      ? await inflateBounded(raw, { limits, budget, signal, deadline, name })
-      : await copyBounded(raw, { limits, budget, signal, deadline, name });
+      ? await inflateBounded(raw, { limits, budget, signal: readSignal, deadline, name, maxBytes, isClosed: () => closed })
+      : await copyBounded(raw, { limits, budget, signal: readSignal, deadline, name, maxBytes, isClosed: () => closed });
 
     if (out.byteLength !== entry.size) {
       throw zipError(ZIP_ERRORS.SIZE_MISMATCH, `${name}: khai báo ${entry.size}, thật ${out.byteLength}`);
@@ -3607,8 +3675,13 @@ async function openZip(input, options = {}) {
       throw zipError(ZIP_ERRORS.SUSPICIOUS_EXPANSION, `${name}: ${Math.round(out.byteLength / entry.compressedSize)}x thực tế`);
     }
     if (crc32(out) !== entry.crc) throw zipError(ZIP_ERRORS.CRC_MISMATCH, name);
-    budget.entryLimit = 0;
     return out;
+  }
+
+  function read(name, opts = {}) {
+    const task = queue.then(() => readEntry(name, opts));
+    queue = task.then(() => undefined, () => undefined);
+    return task;
   }
 
   async function readText(name, opts = {}) {
@@ -3685,6 +3758,54 @@ function xmlError(reason, detail) {
 }
 
 const PREDEFINED = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+/** Độ dài UTF-8 thật, không cấp phát bản encode. */
+function utf8ByteLength(value) {
+  const source = String(value ?? '');
+  let bytes = 0;
+  for (let i = 0; i < source.length; i++) {
+    const code = source.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xD800 && code <= 0xDBFF && i + 1 < source.length
+      && source.charCodeAt(i + 1) >= 0xDC00 && source.charCodeAt(i + 1) <= 0xDFFF) {
+      bytes += 4;
+      i += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+/**
+ * Chuẩn hoá input XML thành string, áp giới hạn BYTE trước khi decode.
+ * Chính sách encoding: UTF-8 (có/không BOM). UTF-16/UTF-32 bị từ chối rõ ràng
+ * thay vì decode mò; OOXML trong thực tế là UTF-8/ASCII.
+ */
+function decodeXmlInput(input, { maxBytes = PARSER_LIMITS.maxXmlBytes, name = 'xml' } = {}) {
+  if (input instanceof Uint8Array) {
+    if (input.byteLength > maxBytes) throw xmlError(XML_ERRORS.TOO_LARGE, `${name}: ${input.byteLength} > ${maxBytes} byte`);
+    if (input.length >= 2 && ((input[0] === 0xFF && input[1] === 0xFE) || (input[0] === 0xFE && input[1] === 0xFF))) {
+      throw xmlError(XML_ERRORS.MALFORMED, `${name}: UTF-16 không được hỗ trợ`);
+    }
+    let text;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(input); }
+    catch { throw xmlError(XML_ERRORS.MALFORMED, `${name}: byte không phải UTF-8 hợp lệ`); }
+    return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+  }
+  const source = String(input ?? '');
+  const bytes = utf8ByteLength(source);
+  if (bytes > maxBytes) throw xmlError(XML_ERRORS.TOO_LARGE, `${name}: ${bytes} > ${maxBytes} byte`);
+  return source.charCodeAt(0) === 0xFEFF ? source.slice(1) : source;
+}
+
+/** Ký tự không hợp lệ trong XML 1.0 và surrogate lẻ. */
+function assertXmlCharacters(source, name) {
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(source)) {
+    throw xmlError(XML_ERRORS.MALFORMED, `${name}: control character không hợp lệ`);
+  }
+  const pair = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  if (pair.test(source)) throw xmlError(XML_ERRORS.MALFORMED, `${name}: surrogate lẻ`);
+}
 
 function isNameStart(ch) {
   return /[A-Za-z_:\u00C0-\uFFFF]/.test(ch);
@@ -3767,15 +3888,14 @@ function parseXml(text, options = {}) {
   const limits = options.limits || PARSER_LIMITS;
   const name = options.name || 'xml';
   const maxBytes = options.maxBytes || limits.maxXmlBytes;
-  const source = String(text ?? '');
-  if (source.length > maxBytes) throw xmlError(XML_ERRORS.TOO_LARGE, `${name}: ${source.length} > ${maxBytes}`);
-
+  const source = decodeXmlInput(text, { maxBytes, name });
+  assertXmlCharacters(source, name);
   let i = 0;
   const n = source.length;
   const stack = [];
   let root = null;
   const lineAt = lineCounter(source);
-  const stats = { nodes: 0, depth: 0, attrs: 0, textLength: 0, bytes: source.length };
+  const stats = { nodes: 0, depth: 0, attrs: 0, textLength: 0, bytes: utf8ByteLength(source) };
 
   const top = () => (stack.length ? stack[stack.length - 1] : null);
   const addText = value => {
@@ -3977,7 +4097,7 @@ function elements(node, visit) {
   }
 }
 
-Object.assign(__exports, { XML_ERRORS, xmlError, decodeXmlEntities, parseXml, child, childrenOf, descendants, attr, textContent, elements });
+Object.assign(__exports, { XML_ERRORS, xmlError, utf8ByteLength, decodeXmlInput, decodeXmlEntities, parseXml, child, childrenOf, descendants, attr, textContent, elements });
 };
 
 __modules["core/ooxml.js"] = function (__exports) {
@@ -4100,11 +4220,13 @@ async function analyzeOoxml(input, options = {}) {
     if (!name || !zip.has(name)) { if (name) ctx.partsSkipped.push(name); return null; }
     checkDeadline(deadline);
     if (signal && signal.aborted) throw new Error('Đã huỷ khi đọc tài liệu.');
-    const text = await zip.readText(name);
+    // Đọc bytes và áp trần XML NGAY trong lúc inflate, trước khi decode.
+    const bytes = await zip.read(name, { maxBytes: limits.maxXmlBytes });
+    if (!bytes) { ctx.partsSkipped.push(name); return null; }
     ctx.partsRead.push(name);
-    const { root } = parseXml(text, { limits, name });
+    const { root } = parseXml(bytes, { limits, name });
     // Giữ raw main part để tính rsid (heuristic Word) mà không đọc lại zip.
-    if (keepRaw) ctx.mainXmlText = text;
+    if (keepRaw) ctx.mainXmlText = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
     return root;
   }
 
@@ -4321,9 +4443,9 @@ async function readDocx(zip, ctx, mainPart, mainRoot) {
 }
 
 async function readPartRoot(zip, ctx, name) {
-  const text = await zip.readText(name);
+  const bytes = await zip.read(name, { maxBytes: ctx.limits.maxXmlBytes });
   ctx.partsRead.push(name);
-  return parseXml(text, { limits: ctx.limits, name });
+  return parseXml(bytes, { limits: ctx.limits, name });
 }
 
 /* ───────────────────────── PPTX ───────────────────────── */
@@ -5608,16 +5730,42 @@ const C2PA_STATES = Object.freeze({
   MANIFEST_INVALID: 'manifest_invalid',
   SIGNATURE_INVALID: 'signature_invalid',
   SIGNATURE_VALID_UNTRUSTED: 'signature_valid_untrusted',
+  SIGNATURE_VALID_PINNED: 'signature_valid_pinned',
+  CERTIFICATE_EXPIRED: 'certificate_expired',
   VERIFIED_TRUSTED: 'verified_trusted',
   TAMPERED: 'asset_modified_after_signing',
 });
 
 const C2PA_LIMITS = Object.freeze({
+  /** Kích thước asset đầu vào tối đa. */
+  maxAssetBytes: 100 * 1024 * 1024,
+  /** Tổng payload manifest sau khi ghép các chunk. */
   maxManifestBytes: 4 * 1024 * 1024,
+  /** Một box JUMBF. */
+  maxBoxBytes: 4 * 1024 * 1024,
   maxBoxes: 512,
   maxDepth: 12,
+  maxCborDepth: 24,
+  maxCborItems: 50000,
+  maxCollectionLength: 5000,
+  maxStringBytes: 1024 * 1024,
+  maxExclusions: 100,
   maxCertBytes: 64 * 1024,
+  maxChainLength: 8,
+  maxTotalCertBytes: 256 * 1024,
+  maxProcessingMs: 3000,
 });
+
+function c2paError(reason, message) {
+  const error = new Error(message || reason);
+  error.code = 'PARSER_ERROR';
+  error.reason = reason;
+  return error;
+}
+
+function checkDeadline(deadline) {
+  if (deadline && Date.now() > deadline) throw c2paError('c2pa_timeout', 'Xác minh C2PA vượt quá thời gian cho phép.');
+}
 
 /* ───────────────────────── CBOR ───────────────────────── */
 
@@ -5631,106 +5779,143 @@ function readUint(bytes, at, length) {
 }
 
 /**
- * Decoder CBOR tối thiểu nhưng đúng: int, bstr, tstr, array, map, tag, float, simple.
- * @returns {{value:any, offset:number}}
+ * Decoder CBOR có ngân sách: depth, tổng item, collection length, chuỗi, byte.
+ * Mọi length được kiểm với số byte còn lại TRƯỚC khi lặp/cấp phát. Definite và
+ * indefinite dùng cùng một budget; trailing bytes chỉ được bỏ qua khi caller
+ * không yêu cầu complete.
+ *
+ * @param {Uint8Array} bytes
+ * @param {number} [offset]
+ * @param {{limits?:object, requireComplete?:boolean, deadline?:number}} [options]
  */
-function decodeCbor(bytes, offset = 0) {
-  const readItem = at => {
-    if (at >= bytes.length) throw new Error('CBOR: hết dữ liệu');
+function decodeCbor(bytes, offset = 0, options = {}) {
+  if (!(bytes instanceof Uint8Array)) throw c2paError('cbor_invalid', 'CBOR: input không phải Uint8Array');
+  const limits = options.limits || C2PA_LIMITS;
+  const budget = { items: 0, stringBytes: 0, depth: 0 };
+  const deadline = options.deadline || 0;
+  const encoder = new TextDecoder('utf-8', { fatal: true });
+
+  const readLength = (info, at) => {
+    if (info < 24) return { length: info, cursor: at + 1 };
+    const size = info === 24 ? 1 : info === 25 ? 2 : info === 26 ? 4 : info === 27 ? 8 : 0;
+    if (!size) throw c2paError('cbor_invalid', `CBOR: length info ${info} không hợp lệ`);
+    if (at + 1 + size > bytes.length) throw c2paError('cbor_truncated', 'CBOR: length vượt biên');
+    let length = 0;
+    for (let i = 0; i < size; i++) length = length * 256 + bytes[at + 1 + i];
+    if (!Number.isSafeInteger(length)) throw c2paError('cbor_invalid', 'CBOR: length vượt Number.MAX_SAFE_INTEGER');
+    return { length, cursor: at + 1 + size };
+  };
+
+  const readItem = (at, depth) => {
+    checkDeadline(deadline);
+    if (depth > limits.maxCborDepth) throw c2paError('cbor_too_deep', `CBOR: depth > ${limits.maxCborDepth}`);
+    if (at >= bytes.length) throw c2paError('cbor_truncated', 'CBOR: hết dữ liệu');
+    if (++budget.items > limits.maxCborItems) throw c2paError('cbor_too_many_items', 'CBOR: quá nhiều item');
     const initial = bytes[at];
     const major = initial >> 5;
     const info = initial & 0x1F;
-    let cursor = at + 1;
-    let length;
-    if (info < 24) length = info;
-    else if (info === 24) { length = bytes[cursor]; cursor += 1; }
-    else if (info === 25) { length = readUint(bytes, cursor, 2); cursor += 2; }
-    else if (info === 26) { length = readUint(bytes, cursor, 4); cursor += 4; }
-    else if (info === 27) { length = readUint(bytes, cursor, 8); cursor += 8; }
-    else if (info === 31) length = -1; // indefinite
-    else throw new Error(`CBOR: info ${info} không hợp lệ`);
+    if (info === 31) {
+      // break chỉ hợp lệ bên trong indefinite container; các container tự xử lý.
+      throw c2paError('cbor_invalid', 'CBOR: break ngoài cấu trúc');
+    }
+    const { length, cursor } = readLength(info, at);
 
     if (major === 0) return { value: length, offset: cursor };
     if (major === 1) return { value: -1 - length, offset: cursor };
     if (major === 2 || major === 3) {
-      if (length === -1) {
-        const chunks = [];
-        let total = 0;
-        for (;;) {
-          if (bytes[cursor] === 0xFF) { cursor += 1; break; }
-          const item = readItem(cursor);
-          const chunk = major === 2 ? item.value : new TextDecoder().decode(item.value);
-          chunks.push(chunk);
-          total += chunk.length;
-          if (total > C2PA_LIMITS.maxManifestBytes) throw new Error('CBOR: chuỗi quá lớn');
-          cursor = item.offset;
-        }
-        return major === 2
-          ? { value: concatBytes(chunks), offset: cursor }
-          : { value: chunks.join(''), offset: cursor };
-      }
-      if (cursor + length > bytes.length) throw new Error('CBOR: chuỗi vượt biên');
+      if (length > limits.maxStringBytes) throw c2paError('cbor_string_too_large', `CBOR: chuỗi ${length} byte`);
+      if (cursor + length > bytes.length) throw c2paError('cbor_truncated', 'CBOR: chuỗi vượt biên');
       const slice = bytes.subarray(cursor, cursor + length);
-      return { value: major === 2 ? slice : new TextDecoder().decode(slice), offset: cursor + length };
-    }
-    if (major === 4) {
-      const out = [];
-      if (length === -1) {
-        for (;;) {
-          if (bytes[cursor] === 0xFF) { cursor += 1; break; }
-          const item = readItem(cursor);
-          out.push(item.value);
-          cursor = item.offset;
-          if (out.length > 50000) throw new Error('CBOR: array quá lớn');
-        }
-        return { value: out, offset: cursor };
+      if (major === 2) {
+        budget.stringBytes += length;
+        if (budget.stringBytes > limits.maxManifestBytes) throw c2paError('cbor_string_too_large', 'CBOR: tổng bstr quá lớn');
+        return { value: slice, offset: cursor + length };
       }
-      for (let i = 0; i < length; i++) {
-        const item = readItem(cursor);
-        out.push(item.value);
-        cursor = item.offset;
-      }
-      return { value: out, offset: cursor };
+      let text;
+      try { text = encoder.decode(slice); }
+      catch { throw c2paError('cbor_invalid_utf8', 'CBOR: text string không phải UTF-8 hợp lệ'); }
+      budget.stringBytes += length;
+      if (budget.stringBytes > limits.maxManifestBytes) throw c2paError('cbor_string_too_large', 'CBOR: tổng tstr quá lớn');
+      return { value: text, offset: cursor + length };
     }
-    if (major === 5) {
+    if (major === 4 || major === 5) {
+      const isMap = major === 5;
       const entries = [];
-      const readPair = () => {
-        const key = readItem(cursor);
-        const value = readItem(key.offset);
+      const items = [];
+      const keys = new Set();
+      const readPair = (atPos, nested) => {
+        const key = readItem(atPos, nested);
+        const scalar = (typeof key.value === 'string' || typeof key.value === 'number') ? `${typeof key.value}:${key.value}` : null;
+        if (scalar !== null && keys.has(scalar)) throw c2paError('cbor_duplicate_key', 'CBOR: map có key trùng.');
+        if (scalar !== null) keys.add(scalar);
+        const value = readItem(key.offset, nested);
         entries.push([key.value, value.value]);
-        cursor = value.offset;
+        return value.offset;
       };
+      const readElement = (atPos, nested) => {
+        const item = readItem(atPos, nested);
+        items.push(item.value);
+        return item.offset;
+      };
+      let cursorAt = cursor;
       if (length === -1) {
         for (;;) {
-          if (bytes[cursor] === 0xFF) { cursor += 1; break; }
-          readPair();
-          if (entries.length > 50000) throw new Error('CBOR: map quá lớn');
+          checkDeadline(deadline);
+          if (cursorAt >= bytes.length) throw c2paError('cbor_truncated', 'CBOR: indefinite chưa đóng');
+          if (bytes[cursorAt] === 0xFF) { cursorAt += 1; break; }
+          if (entries.length + items.length >= limits.maxCollectionLength) {
+            throw c2paError('cbor_collection_too_large', 'CBOR: collection quá lớn');
+          }
+          cursorAt = isMap ? readPair(cursorAt, depth + 1) : readElement(cursorAt, depth + 1);
         }
-        return { value: new CborMap(entries), offset: cursor };
+      } else {
+        if (length > limits.maxCollectionLength) throw c2paError('cbor_collection_too_large', `CBOR: length ${length}`);
+        if (length > bytes.length - cursor) throw c2paError('cbor_truncated', 'CBOR: collection vượt biên');
+        for (let i = 0; i < length; i++) {
+          cursorAt = isMap ? readPair(cursorAt, depth + 1) : readElement(cursorAt, depth + 1);
+        }
       }
-      for (let i = 0; i < length; i++) readPair();
-      return { value: new CborMap(entries), offset: cursor };
+      return isMap
+        ? { value: new CborMap(entries), offset: cursorAt }
+        : { value: items, offset: cursorAt };
     }
     if (major === 6) {
-      const item = readItem(cursor);
+      if (length > Number.MAX_SAFE_INTEGER) throw c2paError('cbor_invalid', 'CBOR: tag không hợp lệ');
+      const item = readItem(cursor, depth + 1);
       return { value: new CborTag(length, item.value), offset: item.offset };
     }
-    // simple / float
+    // major 7: simple / float.
     if (info === 20) return { value: false, offset: cursor };
     if (info === 21) return { value: true, offset: cursor };
     if (info === 22) return { value: null, offset: cursor };
     if (info === 23) return { value: undefined, offset: cursor };
+    if (info === 25) {
+      if (cursor + 2 > bytes.length) throw c2paError('cbor_truncated', 'CBOR: float16 vượt biên');
+      const half = (bytes[at + 1] << 8) | bytes[at + 2];
+      const sign = half & 0x8000 ? -1 : 1;
+      const exponent = (half >> 10) & 0x1F;
+      const fraction = half & 0x3FF;
+      const value = exponent === 0 ? sign * fraction * 2 ** -24
+        : exponent === 31 ? (fraction ? NaN : sign * Infinity)
+          : sign * (1 + fraction / 1024) * 2 ** (exponent - 15);
+      return { value, offset: cursor + 2 };
+    }
     if (info === 26) {
-      const view = new DataView(bytes.buffer, bytes.byteOffset + at + 1, 4);
-      return { value: view.getFloat32(0), offset: at + 5 };
+      if (cursor + 4 > bytes.length) throw c2paError('cbor_truncated', 'CBOR: float32 vượt biên');
+      return { value: new DataView(bytes.buffer, bytes.byteOffset + cursor, 4).getFloat32(0), offset: cursor + 4 };
     }
     if (info === 27) {
-      const view = new DataView(bytes.buffer, bytes.byteOffset + at + 1, 8);
-      return { value: view.getFloat64(0), offset: at + 9 };
+      if (cursor + 8 > bytes.length) throw c2paError('cbor_truncated', 'CBOR: float64 vượt biên');
+      return { value: new DataView(bytes.buffer, bytes.byteOffset + cursor, 8).getFloat64(0), offset: cursor + 8 };
     }
-    return { value: length, offset: cursor };
+    throw c2paError('cbor_invalid', `CBOR: simple value ${info} không hỗ trợ`);
   };
-  return readItem(offset);
+
+  const result = readItem(offset, 0);
+  if (options.requireComplete && result.offset !== bytes.length) {
+    throw c2paError('cbor_trailing_data', 'CBOR: còn byte thừa sau payload.');
+  }
+  return result;
 }
 
 function concatBytes(chunks) {
@@ -5751,6 +5936,7 @@ function readTlv(bytes, pos) {
   if (length & 0x80) {
     const count = length & 0x7F;
     if (count === 0 || count > 4) throw new Error('DER: length không hỗ trợ');
+    if (cursor + count > bytes.length) throw new Error('DER: length vượt biên');
     length = readUint(bytes, cursor, count);
     cursor += count;
   }
@@ -5765,7 +5951,7 @@ function derChildren(bytes, node) {
     const child = readTlv(bytes, at);
     out.push(child);
     at = child.next;
-    if (out.length > 500) break;
+    if (out.length > 500) throw new Error('DER: quá nhiều node');
   }
   return out;
 }
@@ -5863,40 +6049,56 @@ async function parseCertificate(der) {
 /**
  * JUMBF box: LBox(4) TBox(4) [XLBox(8)] payload.
  * jumd: 16-byte UUID + toggles(1) + label (null-terminated) [+ id].
+ *
+ * Mọi box đều được kiểm biên và ngân sách trước khi đọc; cấu trúc hỏng ném lỗi
+ * thay vì trả về cây parse dở. Box `jumb` lồng quá maxDepth cũng là lỗi.
  */
-function parseJumbf(input, { limit = C2PA_LIMITS.maxBoxes, depth = 0 } = {}) {
+function parseJumbf(input, options = {}) {
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  const depth = options.depth || 0;
+  const deadline = options.deadline || 0;
+  const limits = options.limits || C2PA_LIMITS;
+  const maxBoxes = options.maxBoxes || limits.maxBoxes;
+  const maxBoxBytes = options.maxBoxBytes || limits.maxBoxBytes;
+  const budget = options.budget || { boxes: 0 };
+  if (depth > limits.maxDepth) throw c2paError('jumbf_too_deep', `JUMBF: depth > ${limits.maxDepth}`);
   const boxes = [];
   let at = 0;
-  while (at + 8 <= bytes.length && boxes.length < limit) {
+  while (at < bytes.length) {
+    checkDeadline(deadline);
+    if (bytes.length - at < 8) throw c2paError('jumbf_truncated', 'JUMBF: thiếu box header');
     const view = new DataView(bytes.buffer, bytes.byteOffset + at, 8);
     let length = view.getUint32(0);
     const type = String.fromCharCode(bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]);
     let cursor = at + 8;
     if (length === 1) {
-      if (at + 16 > bytes.length) break;
+      if (bytes.length - at < 16) throw c2paError('jumbf_truncated', 'JUMBF: XLBox thiếu 8 byte');
       const high = view.getUint32(8);
       const low = view.getUint32(12);
       length = high * 4294967296 + low;
+      if (!Number.isSafeInteger(length)) throw c2paError('jumbf_invalid', 'JUMBF: XLBox tràn số');
       cursor = at + 16;
     } else if (length === 0) {
+      // Box kéo tới hết buffer: chỉ hợp lệ như box cuối.
       length = bytes.length - at;
     }
-    if (length < cursor - at || at + length > bytes.length) break;
+    if (length < cursor - at) throw c2paError('jumbf_invalid', `JUMBF: LBox ${length} nhỏ hơn header`);
+    if (length > maxBoxBytes) throw c2paError('jumbf_box_too_large', `JUMBF: box ${length} > ${maxBoxBytes} byte`);
+    if (at + length > bytes.length) throw c2paError('jumbf_truncated', `JUMBF: box ${type} vượt biên`);
+    if (++budget.boxes > maxBoxes) throw c2paError('jumbf_too_many_boxes', `JUMBF: > ${maxBoxes} box`);
     const payload = bytes.subarray(cursor, at + length);
     const box = { type, offset: at, length, data: payload };
     if (type === 'jumd') {
-      if (payload.length >= 17) {
-        box.uuid = [...payload.subarray(0, 16)].map(b => b.toString(16).padStart(2, '0')).join('');
-        box.toggles = payload[16];
-        let end = payload.indexOf(0, 17);
-        if (end < 0) end = payload.length;
-        box.label = new TextDecoder().decode(payload.subarray(17, end));
-      }
-    } else if (type === 'jumb' && depth < C2PA_LIMITS.maxDepth) {
-      box.children = parseJumbf(payload, { limit: limit - boxes.length, depth: depth + 1 });
-      // Label của superbox nằm trong jumd con đầu tiên; nội dung thật là các box
-      // còn lại (không tính descriptor).
+      if (payload.length < 17) throw c2paError('jumbf_invalid', 'JUMBF: jumd descriptor quá ngắn');
+      box.uuid = [...payload.subarray(0, 16)].map(b => b.toString(16).padStart(2, '0')).join('');
+      box.toggles = payload[16];
+      let end = payload.indexOf(0, 17);
+      if (end < 0) end = payload.length;
+      try { box.label = new TextDecoder('utf-8', { fatal: true }).decode(payload.subarray(17, end)); }
+      catch { throw c2paError('jumbf_invalid', 'JUMBF: label không phải UTF-8'); }
+    } else if (type === 'jumb') {
+      if (depth >= limits.maxDepth) throw c2paError('jumbf_too_deep', `JUMBF: depth >= ${limits.maxDepth}`);
+      box.children = parseJumbf(payload, { ...options, depth: depth + 1, budget });
       const descriptor = box.children.find(item => item.type === 'jumd');
       if (descriptor) {
         box.label = descriptor.label;
@@ -5923,23 +6125,31 @@ function walkJumbf(boxes, visit, depth = 0) {
 /** Tìm payload C2PA trong JPEG (APP11) hoặc PNG (caBX). */
 function extractC2paPayload(bytes, { maxBytes = C2PA_LIMITS.maxManifestBytes } = {}) {
   const u8 = bytes;
-  if (u8.length < 8) return { found: false };
+  if (!(u8 instanceof Uint8Array) || u8.length < 8) return { found: false };
   if (u8[0] === 0xFF && u8[1] === 0xD8) {
     let at = 2;
     const parts = [];
-    while (at + 4 < u8.length) {
+    let total = 0;
+    while (at + 4 <= u8.length) {
       if (u8[at] !== 0xFF) { at += 1; continue; }
       const marker = u8[at + 1];
       if (marker === 0xDA || marker === 0xD9) break;
       if (marker === 0x00 || (marker >= 0xD0 && marker <= 0xD7) || marker === 0x01) { at += 2; continue; }
+      if (marker === 0xFF) { at += 1; continue; }
+      if (at + 4 > u8.length) return { found: false, container: 'jpeg', invalid: 'truncated_segment' };
       const length = (u8[at + 2] << 8) | u8[at + 3];
-      if (length < 2 || at + 2 + length > u8.length) break;
+      if (length < 2) return { found: false, container: 'jpeg', invalid: 'invalid_segment_length' };
+      if (at + 2 + length > u8.length) return { found: false, container: 'jpeg', invalid: 'truncated_segment' };
       if (marker === 0xEB) {
         const start = at + 4;
         const end = at + 2 + length;
         if (u8[start] === 0x4A && u8[start + 1] === 0x50) {
           const chunk = u8.subarray(start + 2, end);
-          if (chunk.length <= maxBytes) parts.push(chunk);
+          if (chunk.length > maxBytes || total + chunk.length > maxBytes) {
+            return { found: false, container: 'jpeg', invalid: 'manifest_too_large' };
+          }
+          total += chunk.length;
+          parts.push(chunk);
         }
       }
       at += 2 + length;
@@ -5952,8 +6162,15 @@ function extractC2paPayload(bytes, { maxBytes = C2PA_LIMITS.maxManifestBytes } =
     while (at + 8 <= u8.length) {
       const length = ((u8[at] << 24) | (u8[at + 1] << 16) | (u8[at + 2] << 8) | u8[at + 3]) >>> 0;
       const type = String.fromCharCode(u8[at + 4], u8[at + 5], u8[at + 6], u8[at + 7]);
-      const data = u8.subarray(at + 8, at + 8 + length);
-      if (type === 'caBX') return { found: true, container: 'png', payload: data, chunkOffset: at, chunkLength: 12 + length };
+      if (length > maxBytes) {
+        return type === 'caBX'
+          ? { found: false, container: 'png', invalid: 'manifest_too_large' }
+          : { found: false, container: 'png', invalid: 'chunk_too_large' };
+      }
+      if (at + 12 + length > u8.length) return { found: false, container: 'png', invalid: 'truncated_chunk' };
+      if (type === 'caBX') {
+        return { found: true, container: 'png', payload: u8.subarray(at + 8, at + 8 + length), chunkOffset: at, chunkLength: 12 + length };
+      }
       if (type === 'IEND') break;
       at += 12 + length;
     }
@@ -5966,14 +6183,9 @@ function extractC2paPayload(bytes, { maxBytes = C2PA_LIMITS.maxManifestBytes } =
 
 const ALG_INFO = {
   '-7': { name: 'ECDSA', hash: 'SHA-256', importAlg: 'ECDSA', curve: 'P-256' },
-  '-35': { name: 'ECDSA', hash: 'SHA-384', importAlg: 'ECDSA', curve: 'P-384' },
-  '-36': { name: 'ECDSA', hash: 'SHA-512', importAlg: 'ECDSA', curve: 'P-521' },
-  '-257': { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-  '-37': { name: 'RSA-PSS', hash: 'SHA-256', saltLength: 32 },
-  '-38': { name: 'RSA-PSS', hash: 'SHA-384', saltLength: 48 },
-  '-39': { name: 'RSA-PSS', hash: 'SHA-512', saltLength: 64 },
-  '-8': { name: 'Ed25519', hash: null },
 };
+// Chỉ ES256 được kiểm bằng fixture độc lập trong bộ test. Thuật toán chưa có
+// bằng chứng kiểm thử bị từ chối với trạng thái unsupported thay vì "có thể đúng".
 
 function encodeCborText(text) {
   const bytes = new TextEncoder().encode(text);
@@ -6015,20 +6227,34 @@ function toHex(bytes) {
 /** Hash asset với các khoảng loại trừ (exclusions) của hard binding. */
 async function hashWithExclusions(asset, exclusions, alg = 'sha256') {
   const field = (item, key) => (item instanceof CborMap ? item.get(key) : item ? item[key] : undefined);
-  const ranges = (exclusions || [])
-    .map(item => ({ start: Number(field(item, 'start')), length: Number(field(item, 'length')) }))
-    .filter(item => Number.isFinite(item.start) && Number.isFinite(item.length) && item.length >= 0)
-    .sort((a, b) => a.start - b.start);
+  const algorithm = { sha256: 'SHA-256', sha384: 'SHA-384', sha512: 'SHA-512' }[alg];
+  if (!algorithm) throw c2paError('unsupported_hash_algorithm', `Hash algorithm không hỗ trợ: ${alg}`);
+  if (!Array.isArray(exclusions || [])) throw c2paError('invalid_exclusions', 'exclusions phải là array.');
+  if ((exclusions || []).length > C2PA_LIMITS.maxExclusions) {
+    throw c2paError('invalid_exclusions', `Quá nhiều exclusion (> ${C2PA_LIMITS.maxExclusions}).`);
+  }
+  const ranges = (exclusions || []).map(item => {
+    const start = Number(field(item, 'start'));
+    const length = Number(field(item, 'length'));
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(length) || start < 0 || length < 0) {
+      throw c2paError('invalid_exclusions', 'Exclusion có start/length không hợp lệ.');
+    }
+    if (start > asset.length || start + length > asset.length) {
+      throw c2paError('invalid_exclusions', 'Exclusion vượt quá kích thước asset.');
+    }
+    return { start, end: start + length };
+  }).sort((a, b) => a.start - b.start);
+  for (let i = 1; i < ranges.length; i++) {
+    if (ranges[i].start < ranges[i - 1].end) throw c2paError('invalid_exclusions', 'Exclusion chồng lấn.');
+  }
   const chunks = [];
   let cursor = 0;
   for (const range of ranges) {
-    const start = Math.max(cursor, Math.min(range.start, asset.length));
-    if (start > cursor) chunks.push(asset.subarray(cursor, start));
-    cursor = Math.max(cursor, Math.min(range.start + range.length, asset.length));
+    if (range.start > cursor) chunks.push(asset.subarray(cursor, range.start));
+    cursor = range.end;
   }
   if (cursor < asset.length) chunks.push(asset.subarray(cursor));
-  const name = alg === 'sha384' ? 'SHA-384' : alg === 'sha512' ? 'SHA-512' : 'SHA-256';
-  const digest = await crypto.subtle.digest(name, concatBytes(chunks));
+  const digest = await crypto.subtle.digest(algorithm, concatBytes(chunks));
   return toHex(new Uint8Array(digest));
 }
 
@@ -6083,18 +6309,34 @@ async function verifyC2pa(asset, options = {}) {
     assertionCount: 0,
     errors: [],
     diagnostics: [],
+    trustMode: 'none',
+    pinned: false,
+    chainStatus: 'not_evaluated',
+    chainLength: 0,
     trustPolicy: options.trustedFingerprints || options.trustedCertificates ? 'explicit' : 'none',
   };
   const byteArray = asset instanceof Uint8Array ? asset : new Uint8Array(asset);
+  if (byteArray.byteLength > C2PA_LIMITS.maxAssetBytes) {
+    result.state = C2PA_STATES.UNSUPPORTED;
+    result.errors.push(`Asset ${byteArray.byteLength} byte vượt giới hạn ${C2PA_LIMITS.maxAssetBytes}.`);
+    return result;
+  }
+  const deadline = Date.now() + (Number(options.maxProcessingMs) || C2PA_LIMITS.maxProcessingMs);
   const extracted = extractC2paPayload(byteArray);
   result.container = extracted.container || null;
+  if (extracted.invalid) {
+    result.found = true;
+    result.state = C2PA_STATES.MANIFEST_INVALID;
+    result.errors.push(`Container C2PA không hợp lệ: ${extracted.invalid}`);
+    return result;
+  }
   if (!extracted.found) return result;
   result.found = true;
   result.state = C2PA_STATES.DETECTED_UNVERIFIED;
 
   let boxes;
   try {
-    boxes = parseJumbf(extracted.payload);
+    boxes = parseJumbf(extracted.payload, { deadline });
   } catch (error) {
     result.state = C2PA_STATES.MANIFEST_INVALID;
     result.errors.push(`JUMBF: ${error.message}`);
@@ -6115,9 +6357,10 @@ async function verifyC2pa(asset, options = {}) {
   // COSE_Sign1
   let cose;
   try {
-    const decoded = decodeCbor(signatureBox.content);
+    const decoded = decodeCbor(signatureBox.content, 0, { requireComplete: true, deadline });
     const value = decoded.value instanceof CborTag ? decoded.value.value : decoded.value;
     if (!Array.isArray(value) || value.length < 4) throw new Error('COSE_Sign1 phải là array 4 phần tử');
+    if (value.length > 4) throw new Error('COSE_Sign1 có phần tử thừa');
     cose = {
       protectedBytes: value[0] instanceof Uint8Array ? value[0] : new Uint8Array(0),
       unprotected: value[1] instanceof CborMap ? value[1] : new CborMap([]),
@@ -6132,14 +6375,31 @@ async function verifyC2pa(asset, options = {}) {
 
   let protectedHeader = new CborMap([]);
   try {
-    if (cose.protectedBytes.length) protectedHeader = decodeCbor(cose.protectedBytes).value;
+    if (cose.protectedBytes.length) {
+      protectedHeader = decodeCbor(cose.protectedBytes, 0, { requireComplete: true, deadline }).value;
+      if (!(protectedHeader instanceof CborMap)) throw new Error('protected header phải là map');
+    }
   } catch (error) {
-    result.diagnostics.push(`protected header không đọc được: ${error.message}`);
+    result.state = C2PA_STATES.MANIFEST_INVALID;
+    result.errors.push(`protected header không đọc được: ${error.message}`);
+    return result;
   }
-  const algKey = String(protectedHeader instanceof CborMap ? protectedHeader.get(1) : (cose.unprotected.get(1) ?? ''));
+  // COSE yêu cầu alg nằm trong protected header; không chọn thuật toán từ header
+  // không được ký, vì kẻ tấn công có thể đổi nó mà không phá chữ ký.
+  const algKey = protectedHeader.has(1) ? String(protectedHeader.get(1)) : '';
+  if (!algKey) {
+    result.state = C2PA_STATES.SIGNATURE_INVALID;
+    result.errors.push('COSE thiếu alg trong protected header.');
+    return result;
+  }
+  if (cose.unprotected.has(1) && String(cose.unprotected.get(1)) !== algKey) {
+    result.state = C2PA_STATES.SIGNATURE_INVALID;
+    result.errors.push('alg ở protected và unprotected header mâu thuẫn.');
+    return result;
+  }
   const algInfo = ALG_INFO[algKey];
   const x5chain = (() => {
-    const fromProtected = protectedHeader instanceof CborMap ? protectedHeader.get('x5chain') : null;
+    const fromProtected = protectedHeader.get('x5chain');
     const fromUnprotected = cose.unprotected.get('x5chain');
     const chain = fromProtected || fromUnprotected || cose.unprotected.get(33) || protectedHeader.get(33);
     if (!chain) return [];
@@ -6156,6 +6416,26 @@ async function verifyC2pa(asset, options = {}) {
     result.errors.push('Không có x5chain để lấy public key.');
     return result;
   }
+  if (x5chain.length > C2PA_LIMITS.maxChainLength) {
+    result.state = C2PA_STATES.UNSUPPORTED;
+    result.errors.push(`x5chain có ${x5chain.length} chứng chỉ, vượt giới hạn ${C2PA_LIMITS.maxChainLength}.`);
+    return result;
+  }
+  let chainBytes = 0;
+  for (const item of x5chain) {
+    if (!(item instanceof Uint8Array)) {
+      result.state = C2PA_STATES.MANIFEST_INVALID;
+      result.errors.push('x5chain chứa phần tử không phải byte string.');
+      return result;
+    }
+    chainBytes += item.byteLength;
+    if (item.byteLength > C2PA_LIMITS.maxCertBytes || chainBytes > C2PA_LIMITS.maxTotalCertBytes) {
+      result.state = C2PA_STATES.UNSUPPORTED;
+      result.errors.push('Chuỗi chứng chỉ vượt giới hạn byte.');
+      return result;
+    }
+  }
+  result.chainLength = x5chain.length;
 
   let leaf;
   try {
@@ -6199,7 +6479,7 @@ async function verifyC2pa(asset, options = {}) {
   // Claim + hard binding.
   let claim = null;
   try {
-    claim = decodeCbor(cose.payload).value;
+    claim = decodeCbor(cose.payload, 0, { requireComplete: true, deadline }).value;
     if (claim instanceof CborMap) {
       result.claimGenerator = claim.get('claim_generator') || claim.get('claimGenerator') || null;
     }
@@ -6237,7 +6517,7 @@ async function verifyC2pa(asset, options = {}) {
   const hashBox = assertionBoxes.find(box => box.label === 'c2pa.hash.data');
   if (hashBox) {
     try {
-      const assertion = decodeCbor(hashBox.content).value;
+      const assertion = decodeCbor(hashBox.content, 0, { requireComplete: true, deadline }).value;
       if (assertion instanceof CborMap) {
         const expected = assertion.get('hash');
         const exclusions = assertion.get('exclusions');
@@ -6252,7 +6532,10 @@ async function verifyC2pa(asset, options = {}) {
         }
       }
     } catch (error) {
-      result.diagnostics.push(`hard binding: ${error.message}`);
+      result.hashValid = false;
+      result.state = C2PA_STATES.MANIFEST_INVALID;
+      result.errors.push(`Hard binding không hợp lệ: ${error.message}`);
+      return result;
     }
   } else {
     result.diagnostics.push('Không có c2pa.hash.data: chưa kiểm tra được asset có bị sửa sau khi ký.');
@@ -6268,18 +6551,26 @@ async function verifyC2pa(asset, options = {}) {
       } catch { /* chứng chỉ trust store hỏng: bỏ qua, không tự tin */ }
     }
   }
-  result.trusted = trusted.has(leaf.fingerprintSha256);
+  result.pinned = trusted.has(leaf.fingerprintSha256);
+  result.trusted = result.pinned;
+  // Ghim fingerprint là tin cậy TƯỜNG MINH của người dùng ở lá, KHÔNG phải chuỗi
+  // chứng chỉ hợp lệ tới root CA. Chuỗi không được đánh giá trong bản này.
+  result.chainStatus = 'not_evaluated';
+  if (result.pinned) result.trustMode = 'pinned_leaf';
+  result.diagnostics.push('Chuỗi chứng chỉ chưa được đánh giá: không kiểm tra CA/CRL/OCSP/timestamp.');
 
   if (result.state !== C2PA_STATES.TAMPERED) {
-    result.state = result.trusted && !result.expired
-      ? C2PA_STATES.VERIFIED_TRUSTED
-      : C2PA_STATES.SIGNATURE_VALID_UNTRUSTED;
+    if (result.expired) {
+      result.state = C2PA_STATES.CERTIFICATE_EXPIRED;
+    } else {
+      result.state = result.pinned ? C2PA_STATES.SIGNATURE_VALID_PINNED : C2PA_STATES.SIGNATURE_VALID_UNTRUSTED;
+    }
   }
   if (result.expired) result.errors.push('Chứng chỉ đã hết hạn hoặc chưa tới hiệu lực.');
   return result;
 }
 
-Object.assign(__exports, { C2PA_STATES, C2PA_LIMITS, CborMap, decodeCbor, parseCertificate, parseJumbf, walkJumbf, extractC2paPayload, verifyC2pa });
+Object.assign(__exports, { C2PA_STATES, C2PA_LIMITS, CborMap, decodeCbor, parseCertificate, parseJumbf, walkJumbf, extractC2paPayload, hashWithExclusions, verifyC2pa });
 };
 
 __modules["writing/prompts.js"] = function (__exports) {
@@ -6298,7 +6589,7 @@ __modules["writing/prompts.js"] = function (__exports) {
  *  4. Không bịa thông tin; nói rõ khi không chắc.
  */
 
-const PROMPT_VERSION = '2.3.0';
+const PROMPT_VERSION = '2.3.1';
 
 /** Quy tắc bảo toàn, đứng đầu mọi prompt. */
 const PRESERVATION_RULES = Object.freeze([
@@ -8789,7 +9080,7 @@ const PROVIDERS = {
 
 /* @generated:prompts:start — nguồn: packages/writing/prompts.js
    Sinh lại: node tools/sync_assets.js   ·   kiểm tra: node tools/sync_assets.js --check */
-const PROMPT_VERSION = "2.3.0";
+const PROMPT_VERSION = "2.3.1";
 const P_BASE = "You are a careful line editor. Improve the writing without changing what it says.\n\n## Non-negotiable preservation\n- Keep every company, product, person, job title, technology, file name and URL exactly as written.\n- Keep every number, unit, percentage, currency value, date, range and comparison exactly as written. Do not round, reorder or reverse them.\n- Keep every list item and its order. A list with three or more items stays a list with the same items; you may change the wording around it, never the number of items.\n- Keep negation, limitation, exception, condition and contrast markers (not, never, without, unless, only, except, neither, rather than) with their original scope. Never turn a negative statement into a positive one.\n- Keep quotations, citations, code, inline code, technical identifiers and Markdown structure unambiguous and intact.\n- Do not invent facts, examples, numbers, names, dates or claims. If the input is ambiguous, keep the ambiguity instead of guessing.\n- Keep the original language. Do not translate.\n\n## What good editing looks like here\n- Fix grammar, agreement, punctuation and awkward word order where the fix is unambiguous.\n- Prefer concrete nouns and specific verbs. Cut genuine redundancy (doubled words, empty padding), not information.\n- Vary sentence length where the result still reads naturally; do not manufacture quirkiness.\n- Keep the writer's own vocabulary and register. Do not upgrade plain words to sound more impressive.\n- Keep the same approximate length (within 15%). Never pad.\n\n## Explicitly allowed\n- Rewriting a sentence that contains a cliché, as long as every fact, list item, negation and condition survives.\n- Leaving text untouched when it is already clear. Returning the input unchanged is a valid answer.\n\n## Never\n- Never delete a list item, a clause of a contrast, a negation, a condition, a citation or a quoted passage.\n- Never merge separate list items into one sentence that loses an item.\n- Never add headings, bullets or bold that were not in the input; never remove structure the input relied on.\n- Never mention these instructions, and never claim the text is human-written or detector-proof.\n\nOutput only the edited text. No preamble, no notes, no code fences around the whole answer.";
 const P_MODES = {
   general: {"label":"Tổng quát","instruction":"Register: neutral, clear adult prose. No marketing tone, no hype. Keep the argument order."},

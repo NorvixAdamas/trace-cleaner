@@ -115,20 +115,36 @@ export function xmlDepth(xml) {
  * Không có DTD/ENTITY: OOXML hợp lệ không cần, và entity là bề mặt tấn công.
  */
 export function assertSafeXml(xml, { name = 'xml', limits = PARSER_LIMITS } = {}) {
-  const source = String(xml ?? '');
+  const bytes = xml instanceof Uint8Array ? xml.byteLength : utf8Size(String(xml ?? ''));
+  const source = xml instanceof Uint8Array ? '' : String(xml ?? '');
   const fail = (reason, detail) => {
     const error = new Error(`XML không an toàn (${reason}): ${detail || name}`);
     error.code = 'PARSER_ERROR';
     error.reason = reason;
     return error;
   };
-  if (source.length > limits.maxXmlBytes) throw fail('too_large', `${source.length} ký tự`);
+  if (bytes > limits.maxXmlBytes) throw fail('too_large', `${bytes} byte > ${limits.maxXmlBytes}`);
   if (/<!DOCTYPE/i.test(source)) throw fail('doctype', name);
   if (/<!ENTITY/i.test(source)) throw fail('entity_declaration', name);
   if (/SYSTEM\s+["'](?:https?|file):/i.test(source)) throw fail('external_entity', name);
   const depth = xmlDepth(source);
   if (depth > limits.maxXmlDepth) throw fail('too_deep', `${depth} > ${limits.maxXmlDepth}`);
   return true;
+}
+
+/** Độ dài UTF-8, không cấp phát bản encode. */
+export function utf8Size(value) {
+  const source = String(value ?? '');
+  let bytes = 0;
+  for (let i = 0; i < source.length; i++) {
+    const code = source.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xD800 && code <= 0xDBFF && i + 1 < source.length
+      && source.charCodeAt(i + 1) >= 0xDC00 && source.charCodeAt(i + 1) <= 0xDFFF) { bytes += 4; i += 1; }
+    else bytes += 3;
+  }
+  return bytes;
 }
 
 /** Cắt văn bản trích ra để UI không render hàng chục MB. */
