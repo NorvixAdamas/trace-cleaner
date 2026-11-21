@@ -77,10 +77,10 @@ test('panel.html render sidebar thật và trả lời ping từ bundle', async 
     chrome.runtime.sendMessage({ type: 'ping' }, resolve);
   }));
   expect(info.ok).toBe(true);
-  expect(info.engineVersion).toBe('2.3');
-  expect(info.promptVersion).toBe('2.3.1');
+  expect(info.engineVersion).toBe('3.0');
+  expect(info.promptVersion).toBe('3.0.0');
   const version = await panel.evaluate(() => chrome.runtime.getManifest().version);
-  expect(version).toBe('2.3.1');
+  expect(version).toBe('3.0.0');
 });
 
 test('API key: mặc định chỉ ở session, chỉ vào local khi tick ghi nhớ, xoá được', async () => {

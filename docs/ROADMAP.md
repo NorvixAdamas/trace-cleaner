@@ -1,5 +1,26 @@
 # Roadmap
 
+## Đã xong trong Humanize 3.0 (2026-11-21)
+
+- `analyzeWriting`: grammar + clarity + readability + document insights trong một report.
+- Schema gợi ý có `revision`, `preservationStatus`; áp gợi ý kiểm tra stale và bảo toàn.
+- Registry prompt 3.0: 12 chế độ canonical + cover/email, alias cũ, custom voice.
+- `comparePreservation`: số, tên, ngày, URL, email, trích dẫn, phủ định, điều kiện,
+  qualifier, modal, danh sách, Markdown.
+- Không sửa chữ trong trích dẫn trực tiếp; prompt coi tài liệu là dữ liệu không tin cậy.
+- Evaluation thêm F1/FPR/FNR/entity/number/citation/latency/failure; UI review có
+  readability, document insights và lọc theo loại.
+- Benchmark thật 500–5000 từ trong `docs/HUMANIZE_3_BENCHMARKS.md`.
+
+## Còn mở sau 3.0
+
+- **Gate F**: 400 case có review độc lập + corpus có license; hiện chỉ 36 case tự viết.
+- **Vietnamese grammar thật**: classifier, trật tự từ, sắc thái; hiện deterministic một phần.
+- **Worker isolation** cho văn bản rất lớn và timeout cứng ở tầng UI.
+- **Provider live verification** với key của chủ dự án; hiện chỉ test deterministic.
+- **Custom Voice**: editor profile đã có ở web; extension chưa có editor tương đương và chưa có E2E.
+- Corpus DOCX/PPTX/XLSX/C2PA độc lập vẫn chưa có.
+
 ## Đã xong trong 2.2 (2026-11-20)
 
 - Web dùng canonical core (bundle sinh tự động, adapter mỏng, test phát hiện tái nhập engine riêng).

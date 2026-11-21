@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  PROMPT_BASE, MODES, MD_KEEP_CLAUSE, MD_PLAIN_CLAUSE, SELF_EDIT,
+  PROMPT_BASE, MODES, CANONICAL_MODE_KEYS, MD_KEEP_CLAUSE, MD_PLAIN_CLAUSE, SELF_EDIT,
   buildPrompt, PROMPT_VERSION, webPresets,
 } from '../packages/writing/prompts.js';
 
@@ -59,8 +59,29 @@ test('buildPrompt ghép đúng chế độ và mệnh đề Markdown', () => {
   assert.match(buildPrompt('concise', { markdown: true }), /Markdown structure \(mandatory\)/);
   assert.doesNotMatch(buildPrompt('concise', { markdown: false }), /Markdown structure \(mandatory\)/);
   assert.match(buildPrompt('concise', { markdown: false }), /Plain text \(mandatory\)/);
-  assert.match(buildPrompt('không-tồn-tại'), /Editing mode: Tổng quát/);
+  assert.match(buildPrompt('không-tồn-tại'), /Editing mode: Natural Expression/);
   assert.match(PROMPT_VERSION, /^\d+\.\d+\.\d+$/);
+});
+
+test('registry có 12 mode canonical + cover/email, không thiếu mode UI', () => {
+  assert.deepEqual(CANONICAL_MODE_KEYS, [
+    'grammar', 'natural', 'deep', 'academic', 'professional', 'conversational',
+    'concise', 'expanded', 'vocabulary', 'coherence', 'paragraph', 'custom',
+  ]);
+  assert.equal(Object.keys(MODES).length, 14);
+  for (const key of ['cover', 'email']) assert.ok(MODES[key]);
+});
+
+test('web và extension dùng chung danh sách mode + Custom Voice', () => {
+  const html = read('index.html');
+  const sidebar = read('extension/sidebar.js');
+  for (const key of CANONICAL_MODE_KEYS) {
+    assert.ok(html.includes(`value="${key}"`), `web thiếu mode ${key}`);
+    assert.ok(sidebar.includes(`["${key}"`), `extension thiếu mode ${key}`);
+  }
+  assert.match(html, /id="voiceProfile"/);
+  assert.match(html, /Voice profile \(user data, style only\)/);
+  assert.match(html, /const mode = P_MODES\[preset\]/);
 });
 
 test('web dùng đúng bản sinh từ registry', () => {

@@ -85,7 +85,16 @@ export function errorFromStatus(status, body, key) {
  */
 export function normalizeError(error, context = {}) {
   if (!error) return providerError(ERROR_CODES.INTERNAL_ERROR, 'lỗi không xác định');
-  if (error.code && ERROR_CODES[error.code]) return error;
+  if (error.code && ERROR_CODES[error.code]) {
+    const raw = String(error.message || '');
+    const safe = redactSecrets(raw, context.key);
+    if (safe === raw) return error;
+    return providerError(error.code, safe, {
+      retryable: error.retryable,
+      status: error.status,
+      model: error.model,
+    });
+  }
   const timeoutMs = context.timeoutMs ?? 60000;
   if (error.name === 'AbortError' || /aborted/i.test(String(error.message || ''))) {
     return context.cancelled

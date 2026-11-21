@@ -22,7 +22,7 @@ const EMAIL_RE = /[\w.!#$%&'*+/=?^_`{|}~-]+@[\w-]+(?:\.[\w-]+)+/g;
 /** Phiên bản schema kết quả — mọi bề mặt trả cùng shape. */
 export const SCHEMA_VERSION = '1.0';
 /** Phiên bản engine hành vi (khác version sản phẩm/package). */
-export const ENGINE_VERSION = '2.3';
+export const ENGINE_VERSION = '3.0';
 
 /** Nhãn vùng được bảo vệ, dùng cho UI/audit. */
 export const PROTECTED_TYPES = Object.freeze(['code', 'inlineCode', 'link', 'autolink', 'url', 'email']);

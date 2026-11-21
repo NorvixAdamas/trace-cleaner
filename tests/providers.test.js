@@ -157,6 +157,7 @@ test('Base URL phải https, chỉ cho phép loopback http', () => {
   assert.equal(validateBaseUrl('http://localhost:11434/v1').ok, true);
   assert.equal(validateBaseUrl('http://evil.example.com/v1').ok, false);
   assert.equal(validateBaseUrl('not a url').ok, false);
+  assert.equal(validateBaseUrl('https://user:pass@api.example.com/v1').ok, false);
 });
 
 test('key không bao giờ xuất hiện trong message lỗi', async () => {
@@ -199,6 +200,15 @@ test('errorFromStatus map đủ mã', () => {
 test('normalizeError giữ mã đã chuẩn hoá và không bọc lại', () => {
   const original = providerError(ERROR_CODES.PROVIDER_MODEL_UNAVAILABLE, 'x');
   assert.equal(normalizeError(original), original);
+});
+
+test('normalizeError che key kể cả khi lỗi đã có code', () => {
+  const key = 'AIzaCODEDERROR1234567890';
+  const original = providerError(ERROR_CODES.INTERNAL_ERROR, `provider echo ${key}`);
+  const safe = normalizeError(original, { key });
+  assert.equal(safe.code, original.code);
+  assert.ok(!safe.message.includes(key), 'message làm lộ key');
+  assert.match(safe.message, /\[redacted-key\]/);
 });
 
 test('withTimeout trả kết quả bình thường khi kịp', async () => {

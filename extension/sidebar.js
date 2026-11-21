@@ -132,7 +132,7 @@ window.TraceSidebar = (() => {
         <select id="cProvider"><option value="google">Google Gemini</option><option value="openai">OpenAI-compatible</option></select>
         <input id="cBase" placeholder="base url">
         <input id="cModel" placeholder="gemini-3.8-flash">
-        <input id="cKey" type="password" autocomplete="off" spellcheck="false" placeholder="API key (chỉ lưu trong phiên)">
+        <input id="cKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="API key (chỉ lưu trong phiên)">
         <label class="chk" style="margin-top:6px"><input type="checkbox" id="cRemember"> Ghi nhớ API key trên máy này</label>
         <div class="row" style="margin-top:6px"><button id="btnSaveCfg">Lưu cấu hình</button><button id="btnForgetKey" class="ghost">Xoá key</button></div>
         <div class="status" id="cfgMsg" style="font-size:10.5px"></div>
@@ -162,12 +162,16 @@ window.TraceSidebar = (() => {
     const newRequestId = () => "ui_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
     // Kiểu viết lại: cùng danh sách với web (packages/writing/prompts.js).
     const MODE_LABELS = [
-      ["general", "Tổng quát"], ["proofread", "Proofread"], ["clarity", "Clarity"],
-      ["concise", "Concise"], ["natural", "Natural flow"], ["professional", "Professional"],
-      ["academic", "Học thuật"], ["cover", "Cover letter"], ["email", "Email"]
+      ["grammar", "Grammar & Spelling"], ["natural", "Natural Expression"],
+      ["deep", "Deep Rewrite"], ["academic", "Academic"],
+      ["professional", "Professional"], ["conversational", "Conversational"],
+      ["concise", "Concise"], ["expanded", "Expanded"],
+      ["vocabulary", "Vocabulary"], ["coherence", "Clarity & Coherence"],
+      ["paragraph", "Paragraph"], ["custom", "Custom Voice"],
+      ["cover", "Cover letter"], ["email", "Email"]
     ];
-    let mode = localStorage.getItem("traceMode") || "general";
-    if (!MODE_LABELS.some(([value]) => value === mode)) mode = "general";
+    let mode = localStorage.getItem("traceMode") || "natural";
+    if (!MODE_LABELS.some(([value]) => value === mode)) mode = "natural";
     const modeSel = $("cMode");
     modeSel.innerHTML = MODE_LABELS.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
     modeSel.value = mode;

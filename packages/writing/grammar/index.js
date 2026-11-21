@@ -16,6 +16,8 @@ import {
 } from '../suggestions.js';
 import { EN_RULES } from './en.js';
 import { VI_RULES } from './vi.js';
+import { documentRevision } from '../shared/schema.js';
+import { quotedRanges, insideRanges } from '../shared/normalization.js';
 
 export const GRAMMAR_SCHEMA_VERSION = '2.0';
 
@@ -61,6 +63,8 @@ export function analyze(text, options = {}) {
   const filter = Array.isArray(options.types) && options.types.length ? new Set(options.types) : null;
   const minConfidence = Number.isFinite(options.minConfidence) ? Number(options.minConfidence) : 0;
   const collected = [];
+  const ruleErrors = [];
+  const quotes = quotedRanges(source);
 
   for (const seg of segmentText(source)) {
     if (seg.type !== 'text' || !seg.value) continue;
@@ -70,11 +74,14 @@ export function analyze(text, options = {}) {
       let hits = [];
       try {
         hits = rule.run(seg.value) || [];
-      } catch {
-        hits = []; // một luật hỏng không được làm hỏng cả báo cáo
+      } catch (error) {
+        hits = [];
+        ruleErrors.push({ ruleId: rule.id, message: String(error && error.message ? error.message : error) });
       }
       for (const hit of hits) {
         if (!Number.isInteger(hit.start) || !Number.isInteger(hit.end) || hit.end <= hit.start) continue;
+        // Không sửa chữ bên trong trích dẫn trực tiếp.
+        if (insideRanges(seg.start + hit.start, seg.start + hit.end, quotes)) continue;
         const suggestion = makeSuggestion(source, {
           type: hit.category || rule.type,
           category: hit.category || rule.type,
@@ -110,6 +117,7 @@ export function analyze(text, options = {}) {
     suggestions,
     truncated: list.length > suggestions.length,
     stats: suggestionStats(suggestions),
+    ruleErrors,
     schemaVersion: GRAMMAR_SCHEMA_VERSION,
     offsetSystem: 'utf16-source',
   };
@@ -123,24 +131,43 @@ export function analyze(text, options = {}) {
  * @returns {ReturnType<typeof applyEdits>}
  */
 export function applySuggestion(text, suggestion, options = {}) {
+  const source = String(text ?? '');
   if (!suggestion || typeof suggestion.start !== 'number') {
-    return { text: String(text ?? ''), applied: [], rejected: [{ edit: suggestion, reason: 'invalid_edit' }], conflicts: [], sourceRevision: options.sourceRevision ?? null, schemaVersion: '1.0' };
+    return { text: source, applied: [], rejected: [{ edit: suggestion, reason: 'invalid_edit' }], conflicts: [], sourceRevision: options.sourceRevision ?? null, schemaVersion: '1.0' };
   }
-  return applyEdits(text, [{
+  const expected = options.sourceRevision || suggestion.revision;
+  if (expected && expected !== documentRevision(source)) {
+    return { text: source, applied: [], rejected: [], conflicts: [{ edit: suggestion, reason: 'stale_revision' }], sourceRevision: options.sourceRevision ?? null, schemaVersion: '1.0' };
+  }
+  return applyEdits(source, [{
     start: suggestion.start,
     end: suggestion.end,
     find: suggestion.original,
     replace: suggestion.replacement,
-  }], { sourceRevision: options.sourceRevision });
+  }], { sourceRevision: options.sourceRevision || suggestion.revision });
 }
 
 /** Áp nhiều gợi ý trong một lần, kiểm tra chồng lấn. */
 export function applySuggestions(text, suggestions, options = {}) {
-  const edits = (suggestions || []).map(item => ({
-    start: item.start,
-    end: item.end,
-    find: item.original,
-    replace: item.replacement,
-  }));
-  return applyEdits(text, edits, { sourceRevision: options.sourceRevision });
+  const source = String(text ?? '');
+  const revision = options.sourceRevision || documentRevision(source);
+  const rejected = [];
+  const edits = [];
+  for (const item of suggestions || []) {
+    if (item && item.revision && item.revision !== revision) {
+      rejected.push({ edit: item, reason: 'stale_revision' });
+      continue;
+    }
+    edits.push({
+      start: item.start,
+      end: item.end,
+      find: item.original,
+      replace: item.replacement,
+      ruleId: item.ruleId,
+      category: item.category,
+      kind: item.kind,
+    });
+  }
+  const result = applyEdits(source, edits, { sourceRevision: revision });
+  return { ...result, rejected: [...result.rejected, ...rejected] };
 }

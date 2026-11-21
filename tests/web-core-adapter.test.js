@@ -44,7 +44,7 @@ test('index.html nhúng bundle core sinh tự động và phơi đủ API', () =
   assert.equal(typeof context.TraceCore.DocumentSession, 'function');
   assert.equal(typeof context.TraceWriting.analyze, 'function');
   assert.equal(typeof context.TraceProviders.generate, 'function');
-  assert.equal(context.TraceCore.__engineVersion, '2.3');
+  assert.equal(context.TraceCore.__engineVersion, '3.0');
 });
 
 test('web cleanText là adapter: không chứa regex làm sạch riêng', () => {

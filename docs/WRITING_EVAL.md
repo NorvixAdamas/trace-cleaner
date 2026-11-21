@@ -2,10 +2,19 @@
 
 Sinh lại: `node tools/eval_writing.js` · đo trên fixture có nhãn, không phải "điểm AI".
 
-| Tập | Case | Nhãn | Khớp | Thiếu | Thừa | Precision | Recall | Offset đúng |
-|---|---|---|---|---|---|---|---|---|
-| dev | 24 | 20 | 20 | 0 | 0 | 100.0% | 100.0% | 100.0% |
-| held-out | 12 | 10 | 10 | 0 | 0 | 100.0% | 100.0% | 100.0% |
+| Tập | Case | Nhãn | Khớp | Thiếu | Thừa | Precision | Recall | F1 | FPR | FNR | Offset đúng |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| dev | 24 | 20 | 20 | 0 | 0 | 100.0% | 100.0% | 100.0% | 0.0% | 0.0% | 100.0% |
+| held-out | 12 | 10 | 10 | 0 | 0 | 100.0% | 100.0% | 100.0% | 0.0% | 0.0% | 100.0% |
+
+| Tập | Bảo toàn chuỗi | Thực thể | Số | Trích dẫn |
+|---|---|---|---|---|
+| dev | 100.0% | — | — | — |
+| held-out | 100.0% | — | — | — |
+
+- **FPR** = false positive / (khớp + thừa). **FNR** = thiếu / nhãn.
+- **Acceptance rate**: chưa đo — cần log người dùng thật; runner không bịa số.
+- **Failure rate / latency** có trong JSON của runner; không đưa vào bảng vì phụ thuộc máy chạy.
 
 ## Cách đọc
 

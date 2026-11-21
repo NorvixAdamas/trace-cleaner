@@ -13,7 +13,22 @@ node tools/bench.js                   # benchmark (không phải test)
 
 Yêu cầu: Node ≥ 20, Python 3.11+ cho parity/build. Test Python tự `skip` nếu không có `python`.
 
-## Kết quả chạy 2026-11-21 (sau hardening 2.3.1)
+## Kết quả chạy 2026-11-21 (sau Humanize 3.0)
+
+| Lệnh | Kết quả |
+|---|---|
+| `npm test` | **352 pass, 0 fail** |
+| `npx playwright test` | **6 pass** (5 extension + 1 web rewrite) |
+| `node tools/sync_assets.js --check` | `artifact khớp nguồn` |
+| `python tools/sync_core.py --check` | `extension/core khớp packages/core` |
+| `node tools/check_extension.js` | `manifest OK · v3.0.0 · 4 permission` |
+| `node tools/eval_writing.js --check` | dev 20/20 · held-out 10/10 |
+| `python tools/build_guide.py --check` | `index.html không đổi (guide đã khớp)` |
+
+Chi tiết mới: [HUMANIZE_3_TESTING.md](HUMANIZE_3_TESTING.md). Các mục chưa test
+(review-panel E2E, live provider, 400 case, worker) được ghi là gap, không phải pass.
+
+## Kết quả chạy 2026-11-21 (sau hardening 2.3.1, lịch sử)
 
 | Lệnh | Kết quả |
 |---|---|

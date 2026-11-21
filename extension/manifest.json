@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Trace Cleaner — sidebar",
-  "version": "2.3.1",
+  "version": "3.0.0",
   "description": "Sidebar quét & làm sạch ký tự ẩn, kiểm tra bảo toàn nội dung, viết lại có duyệt.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],

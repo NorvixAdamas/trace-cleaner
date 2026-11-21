@@ -37,9 +37,9 @@ test('extension/core/prompts.js là bản copy của registry', () => {
   assert.match(copy.split('\n')[0], /AUTO-GENERATED/);
 });
 
-test('manifest 2.3.1 không chèn content script tĩnh, có command cho sidebar nổi', () => {
+test('manifest 3.0.0 không chèn content script tĩnh, có command cho sidebar nổi', () => {
   const manifest = JSON.parse(read('extension/manifest.json'));
-  assert.equal(manifest.version, '2.3.1');
+  assert.equal(manifest.version, '3.0.0');
   assert.equal(manifest.content_scripts, undefined, 'không được chèn content script trên mọi trang');
   assert.ok(manifest.commands['toggle-floating'], 'thiếu command chèn sidebar theo thao tác người dùng');
   assert.ok(manifest.permissions.includes('activeTab'));

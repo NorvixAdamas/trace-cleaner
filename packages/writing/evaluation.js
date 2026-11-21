@@ -59,13 +59,22 @@ export function evaluateDataset(cases, { run }) {
   const totals = {
     cases: 0, expected: 0, matched: 0, missing: 0, extra: 0, words: 0,
     offsetChecked: 0, offsetOk: 0, preserveChecked: 0, preserveOk: 0,
+    entityChecked: 0, entityOk: 0, numberChecked: 0, numberOk: 0,
+    citationChecked: 0, citationOk: 0, failures: 0, latencyMs: 0,
   };
   const byCategory = {};
 
   for (const testCase of cases || []) {
     totals.cases += 1;
     totals.words += wordCount(testCase.text);
-    const suggestions = run(testCase).suggestions || [];
+    const startedAt = performance.now();
+    let suggestions = [];
+    try {
+      suggestions = run(testCase).suggestions || [];
+    } catch {
+      totals.failures += 1;
+    }
+    totals.latencyMs += performance.now() - startedAt;
     const result = matchExpectations(testCase.text, testCase.expect, suggestions);
     totals.expected += (testCase.expect || []).length;
     totals.matched += result.matched.length;
@@ -93,6 +102,21 @@ export function evaluateDataset(cases, { run }) {
       for (const needle of testCase.preserve) if (applied.includes(needle)) totals.preserveOk += 1;
     }
 
+    const corrections = result.matched.map(item => item.hit).filter(item => item.kind === 'correction');
+    const appliedText = corrections.length ? applySuggestions(testCase.text, corrections).text : testCase.text;
+    const sample = (values, field) => {
+      if (!Array.isArray(values) || !values.length) return;
+      for (const needle of values) {
+        totals[field === 'entity' ? 'entityChecked' : field === 'number' ? 'numberChecked' : 'citationChecked'] += 1;
+        if (appliedText.includes(needle)) {
+          totals[field === 'entity' ? 'entityOk' : field === 'number' ? 'numberOk' : 'citationOk'] += 1;
+        }
+      }
+    };
+    sample(testCase.preserveEntities, 'entity');
+    sample(testCase.preserveNumbers, 'number');
+    sample(testCase.preserveCitations, 'citation');
+
     if (process.env.TRACE_EVAL_VERBOSE) {
       console.log(testCase.id, { missing: result.missing, extra: result.extra.map(item => [item.ruleId, item.original]) });
     }
@@ -109,14 +133,25 @@ export function evaluateDataset(cases, { run }) {
 
   const precision = totals.matched + totals.extra === 0 ? 1 : totals.matched / (totals.matched + totals.extra);
   const recall = totals.expected === 0 ? 1 : totals.matched / totals.expected;
+  const f1 = precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall);
   const offsetAccuracy = totals.offsetChecked === 0 ? 1 : totals.offsetOk / totals.offsetChecked;
   const preservation = totals.preserveChecked === 0 ? 1 : totals.preserveOk / totals.preserveChecked;
   return {
     ...totals,
     precision,
     recall,
+    f1,
     offsetAccuracy,
     preservation,
+    falsePositiveRate: totals.matched + totals.extra === 0 ? 0 : totals.extra / (totals.matched + totals.extra),
+    falseNegativeRate: totals.expected === 0 ? 0 : totals.missing / totals.expected,
+    failureRate: totals.cases ? totals.failures / totals.cases : 0,
+    averageLatencyMs: totals.cases ? totals.latencyMs / totals.cases : 0,
+    entityPreservation: totals.entityChecked ? totals.entityOk / totals.entityChecked : null,
+    numberPreservation: totals.numberChecked ? totals.numberOk / totals.numberChecked : null,
+    citationPreservation: totals.citationChecked ? totals.citationOk / totals.citationChecked : null,
+    acceptanceRate: null,
+    acceptanceNote: 'Cần log người dùng thật; runner không tự bịa tỉ lệ chấp nhận.',
     falsePositivesPer1000Words: totals.words ? (totals.extra / totals.words) * 1000 : 0,
     byCategory: Object.fromEntries(Object.entries(byCategory).map(([key, value]) => [
       key,
@@ -129,15 +164,26 @@ export function evaluateDataset(cases, { run }) {
 /** Sinh báo cáo Markdown từ kết quả evaluateDataset. */
 export function formatEvaluationReport(results, { title = 'Đánh giá Writing Intelligence' } = {}) {
   const rows = results.map(result => [
-    `| ${result.name} | ${result.cases} | ${result.expected} | ${result.matched} | ${result.missing} | ${result.extra} | ${(result.precision * 100).toFixed(1)}% | ${(result.recall * 100).toFixed(1)}% | ${(result.offsetAccuracy * 100).toFixed(1)}% |`,
+    `| ${result.name} | ${result.cases} | ${result.expected} | ${result.matched} | ${result.missing} | ${result.extra} | ${(result.precision * 100).toFixed(1)}% | ${(result.recall * 100).toFixed(1)}% | ${(result.f1 * 100).toFixed(1)}% | ${(result.falsePositiveRate * 100).toFixed(1)}% | ${(result.falseNegativeRate * 100).toFixed(1)}% | ${(result.offsetAccuracy * 100).toFixed(1)}% |`,
   ].join('\n')).join('\n');
+  const semantics = results.map(result =>
+    `| ${result.name} | ${(result.preservation * 100).toFixed(1)}% | ${result.entityPreservation === null ? '—' : `${(result.entityPreservation * 100).toFixed(1)}%`} | ${result.numberPreservation === null ? '—' : `${(result.numberPreservation * 100).toFixed(1)}%`} | ${result.citationPreservation === null ? '—' : `${(result.citationPreservation * 100).toFixed(1)}%`} |`,
+  ).join('\n');
   return `# ${title}
 
 Sinh lại: \`node tools/eval_writing.js\` · đo trên fixture có nhãn, không phải "điểm AI".
 
-| Tập | Case | Nhãn | Khớp | Thiếu | Thừa | Precision | Recall | Offset đúng |
-|---|---|---|---|---|---|---|---|---|
+| Tập | Case | Nhãn | Khớp | Thiếu | Thừa | Precision | Recall | F1 | FPR | FNR | Offset đúng |
+|---|---|---|---|---|---|---|---|---|---|---|---|
 ${rows}
+
+| Tập | Bảo toàn chuỗi | Thực thể | Số | Trích dẫn |
+|---|---|---|---|---|
+${semantics}
+
+- **FPR** = false positive / (khớp + thừa). **FNR** = thiếu / nhãn.
+- **Acceptance rate**: chưa đo — cần log người dùng thật; runner không bịa số.
+- **Failure rate / latency** có trong JSON của runner; không đưa vào bảng vì phụ thuộc máy chạy.
 
 ## Cách đọc
 

@@ -82,3 +82,33 @@ test('rewrite: hiển thị = proposal = bản Accept, raw không lọt vào Rev
   expect(await page.inputValue('#src')).toBe('Câu gốc của người dùng.');
   await context.close();
 });
+
+test('language switch: English default, then Chinese, then Vietnamese; persists', async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(baseUrl);
+  const select = page.locator('#uiLang');
+  await expect(select).toHaveValue('en');
+  expect(await select.locator('option').allTextContents()).toEqual(['English', '中文', 'Tiếng Việt']);
+  await expect(page.locator('button[data-tab="scan"]')).toHaveText('Report');
+  await expect(page.locator('[data-i18n="clean.legend"]')).toHaveText('Cleanup options');
+  await expect(page.locator('[data-i18n="api.key"]')).toHaveText('API key');
+  await expect(page.locator('#src')).toHaveAttribute('placeholder', /Paste the text/);
+  expect(await page.title()).toContain('Unicode cleanup');
+  expect(await page.locator('html').getAttribute('lang')).toBe('en');
+  await select.selectOption('zh');
+  await expect(page.locator('button[data-tab="scan"]')).toHaveText('报告');
+  await expect(page.locator('button[data-tab="review"]')).toHaveText('审阅');
+  await expect(page.locator('[data-i18n="clean.legend"]')).toHaveText('清理选项');
+  await expect(page.locator('[data-i18n="api.key"]')).toHaveText('API 密钥');
+  await expect(page.locator('#src')).toHaveAttribute('placeholder', /在此粘贴/);
+  expect(await page.locator('html').getAttribute('lang')).toBe('zh-CN');
+  await select.selectOption('vi');
+  await expect(page.locator('button[data-tab="scan"]')).toHaveText('Báo cáo');
+  await expect(page.locator('[data-i18n="clean.legend"]')).toHaveText('Tuỳ chọn làm sạch');
+  await expect(page.locator('#src')).toHaveAttribute('placeholder', /Dán văn bản/);
+  await page.reload();
+  await expect(page.locator('#uiLang')).toHaveValue('vi');
+  await expect(page.locator('button[data-tab="scan"]')).toHaveText('Báo cáo');
+  await context.close();
+});

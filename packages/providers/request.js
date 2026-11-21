@@ -72,6 +72,9 @@ export function validateBaseUrl(base) {
   try { url = new URL(value); } catch {
     return { ok: false, error: providerError(ERROR_CODES.CONFIG_ERROR, 'Base URL không hợp lệ.') };
   }
+  if (url.username || url.password) {
+    return { ok: false, error: providerError(ERROR_CODES.CONFIG_ERROR, 'Base URL không được chứa thông tin đăng nhập.') };
+  }
   if (url.protocol === 'https:') return { ok: true, url };
   if (url.protocol === 'http:' && LOOPBACK.test(value)) return { ok: true, url, insecureLocalhost: true };
   return {

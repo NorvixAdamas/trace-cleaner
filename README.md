@@ -8,8 +8,9 @@ Công cụ **chạy tại máy** để:
 - viết lại văn bản bằng model của bạn (Gemini / OpenAI-compatible) **và kiểm tra lại** xem số,
   URL, ngày, phủ định, điều kiện, trích dẫn, cấu trúc Markdown có bị mất không;
 - rà soát thay đổi theo từng bước: diff, chấp nhận/từ chối, undo/redo, khôi phục bản gốc, export;
-- gợi ý ngữ pháp/chính tả **deterministic, offline** cho tiếng Anh và tiếng Việt, kèm phân tích
-  nhất quán toàn tài liệu; duyệt **từng** gợi ý với undo/redo;
+- engine Writing Intelligence **deterministic, offline**: ngữ pháp/chính tả en + vi, clarity,
+  readability, nhất quán và phát hiện cấp tài liệu; gợi ý mang revision + trạng thái bảo toàn,
+  duyệt **từng** gợi ý với undo/redo; 12 chế độ viết lại canonical + cover/email;
 - đọc file `.docx/.pptx/.xlsx/.pdf/ảnh` bằng parser cấu trúc: DOCX tracked changes + comment,
   PPTX speaker notes, XLSX worksheet/ô/ngày/công thức, PDF trang + text layer, C2PA có xác minh
   chữ ký; mọi giới hạn tài nguyên được áp trong lúc đọc.
@@ -25,10 +26,10 @@ API key — xem [docs/PRIVACY.md](docs/PRIVACY.md).
 
 | Thành phần | Version |
 |---|---|
-| Sản phẩm (web + extension + CLI) | **2.3.1** |
-| Prompt registry (`PROMPT_VERSION`) | **2.3.1** — tách riêng khỏi version sản phẩm |
-| Engine (`ENGINE_VERSION`) | **2.3** |
-| Schema kết quả | `1.0` |
+| Sản phẩm (web + extension + CLI) | **3.0.0** |
+| Prompt registry (`PROMPT_VERSION`) | **3.0.0** — tách riêng khỏi version sản phẩm |
+| Engine (`ENGINE_VERSION`) | **3.0** |
+| Schema kết quả | core `1.0` · writing `3.0` |
 
 ## Dùng web
 
@@ -43,10 +44,15 @@ python -m http.server 8781 --bind 127.0.0.1
 
 Bản công khai: `https://norvixadamas.github.io/trace-cleaner/`.
 
+Giao diện có nút ngôn ngữ ở góc trên: **English** (mặc định) → **中文** → **Tiếng Việt**.
+Lựa chọn được lưu trong `localStorage` (`traceUiLang`); đổi ngôn ngữ không gửi dữ liệu đi đâu.
+Nút này dịch phần giao diện làm việc; phần Guide kỹ thuật và thông báo phân tích động vẫn giữ
+ngôn ngữ nguồn.
+
 `index.html` dùng **cùng engine với extension**: bundle sinh tự động từ `packages/core` được nhúng
 giữa marker `@generated:core:start/end`. Trang chỉ còn adapter mỏng, không có bản sao thuật toán.
 
-## Extension Chrome (MV3, v2.3.1)
+## Extension Chrome (MV3, v3.0.0)
 
 1. `chrome://extensions` → bật Developer mode → **Load unpacked** → chọn thư mục `extension/`.
 2. Bấm icon để mở Side Panel. Sidebar nổi chỉ được chèn sau thao tác của bạn: `Alt+Shift+F` (command của extension) rồi `Alt+Shift+S` để bật/tắt.
@@ -54,7 +60,7 @@ giữa marker `@generated:core:start/end`. Trang chỉ còn adapter mỏng, khô
    (mất khi đóng trình duyệt); tick **"Ghi nhớ API key trên máy này"** mới ghi
    `chrome.storage.local`. Có nút **Xoá key**. Key cũ do bản ≤2.2 để lại trong local được chuyển
    sang session khi nạp cấu hình.
-4. Chọn kiểu viết lại trong ô cạnh nút Markdown (9 chế độ, cùng bộ với web).
+4. Chọn kiểu viết lại trong ô cạnh nút Markdown (14 chế độ, gồm 12 chế độ canonical; cùng registry với web).
 5. Nút **Huỷ** dừng request đang chạy (khác với timeout). Nếu kiểm tra bảo toàn thất bại, nút
    "Dán vào trang" yêu cầu xác nhận rõ ràng.
 
@@ -83,13 +89,14 @@ nguyên CRLF và không truy cập mạng.
 ## Test
 
 ```bash
-npm test                              # 311 test Node (unit + integration + security)
-npx playwright test                    # 6 Chrome E2E thật (extension + web rewrite)
+npm test                              # 352 test Node (unit + integration + security)
+npx playwright test                    # 7 Chrome E2E thật (extension + web rewrite + language switch)
 node tools/sync_assets.js --check     # bundle + prompt + index.html khớp nguồn
 python tools/sync_core.py --check     # extension/core khớp packages/core
 node tools/check_extension.js         # manifest, thứ tự nạp core, artifact, icon
 python tools/build_guide.py --check   # guide trong index.html khớp GUIDE.md
 node tools/eval_writing.js --check    # eval writing dev + held-out khớp docs
+node tools/bench_writing.js           # benchmark analyze/rewrite 500–5000 từ (thật)
 node tools/bench_2_3.js               # benchmark parser 2.3 (tuỳ chọn)
 ```
 
@@ -115,8 +122,9 @@ packages/core/        unicode, entities, preservation, diff, document, markdown,
                       zip (streaming), xml (strict), ooxml, pdf, c2pa
 tools/                sync_assets, sync_core, build_guide, check_extension, trace_scan, bench,
                       bench_2_3, eval_writing, make_c2pa_fixture
-packages/writing/     prompts (9 chế độ), suggestions, language, consistency, evaluation,
-                      grammar/{en,vi,index}
+packages/writing/     prompts (14 chế độ, 12 canonical), analyze, suggestions, language,
+                      consistency, evaluation, modes, grammar/{en,vi,index},
+                      engine/{readability,clarity,preserve,document,rewrite}, shared/
 packages/providers/   errors, request (timeout/cancel/registry), google, openai-compatible, registry
 extension/            MV3: background (service worker), config (key policy + host permission),
                       sidebar, content, panel, core/ (sinh tự động)
@@ -131,14 +139,28 @@ docs/                 kiến trúc, API, bảo mật, privacy, testing, audit, r
 
 ## Tài liệu
 
+- [docs/HUMANIZE_3_RELEASE_REPORT.md](docs/HUMANIZE_3_RELEASE_REPORT.md) — báo cáo Humanize 3.0 và trạng thái gate
+- [docs/HUMANIZE_3_ARCHITECTURE.md](docs/HUMANIZE_3_ARCHITECTURE.md) · [docs/HUMANIZE_3_API.md](docs/HUMANIZE_3_API.md)
+- [docs/HUMANIZE_3_LANGUAGE_SUPPORT.md](docs/HUMANIZE_3_LANGUAGE_SUPPORT.md) · [docs/HUMANIZE_3_EVALUATION.md](docs/HUMANIZE_3_EVALUATION.md)
+- [docs/HUMANIZE_3_SECURITY.md](docs/HUMANIZE_3_SECURITY.md) · [docs/HUMANIZE_3_TESTING.md](docs/HUMANIZE_3_TESTING.md)
+- [docs/HUMANIZE_3_BENCHMARKS.md](docs/HUMANIZE_3_BENCHMARKS.md)
 - [docs/TRACE_CLEANER_2_3_RELEASE_REPORT.md](docs/TRACE_CLEANER_2_3_RELEASE_REPORT.md) — báo cáo phát hành 2.3 (A–H)
-- [docs/WRITING_EVAL.md](docs/WRITING_EVAL.md) — precision/recall trên dev + held-out
+- [docs/WRITING_EVAL.md](docs/WRITING_EVAL.md) — precision/recall/F1 trên dev + held-out
 - [docs/TRACE_CLEANER_2_2_BASELINE.md](docs/TRACE_CLEANER_2_2_BASELINE.md) — baseline trước sprint 2.2 (lịch sử)
 - [docs/TRACE_CLEANER_2_2_FINAL_REPORT.md](docs/TRACE_CLEANER_2_2_FINAL_REPORT.md) — báo cáo A–K
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/API.md](docs/API.md)
 - [docs/SECURITY.md](docs/SECURITY.md) · [docs/PRIVACY.md](docs/PRIVACY.md)
 - [docs/TESTING.md](docs/TESTING.md) · [docs/ROADMAP.md](docs/ROADMAP.md) · [docs/AUDIT.md](docs/AUDIT.md)
 - [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
+
+## Trạng thái Humanize 3.0
+
+3.0 thêm `analyzeWriting` (grammar + clarity + readability + document), kiểm tra bảo toàn
+cho từng lần áp gợi ý, registry 12 chế độ canonical, chặn sửa trong trích dẫn, và metric
+F1/FPR/FNR. Các gate chưa đạt — **400 case độc lập, corpus DOCX/PPTX/XLSX/C2PA độc lập,
+worker isolation, xác minh provider live** — được ghi rõ là BLOCKED/PARTIAL trong
+[docs/HUMANIZE_3_RELEASE_REPORT.md](docs/HUMANIZE_3_RELEASE_REPORT.md); không có tuyên bố
+release-ready cho các gate đó.
 
 ## Trạng thái hardening 2.3.1
 

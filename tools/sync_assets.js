@@ -42,12 +42,21 @@ const BUNDLE_MODULES = [
   'core/ooxml.js',
   'core/pdf.js',
   'core/c2pa.js',
+  'writing/shared/schema.js',
+  'writing/shared/normalization.js',
   'writing/prompts.js',
   'writing/suggestions.js',
   'writing/language.js',
   'writing/grammar/en.js',
   'writing/grammar/vi.js',
   'writing/grammar/index.js',
+  'writing/consistency.js',
+  'writing/engine/readability.js',
+  'writing/engine/clarity.js',
+  'writing/engine/preserve.js',
+  'writing/engine/document.js',
+  'writing/engine/rewrite.js',
+  'writing/analyze.js',
   'providers/errors.js',
   'providers/request.js',
   'providers/google.js',
@@ -63,6 +72,7 @@ const CORE_GLOBALS = [
   ]],
   ['TraceWriting', [
     'writing/prompts.js', 'writing/suggestions.js', 'writing/language.js', 'writing/grammar/index.js',
+    'writing/analyze.js',
   ]],
   ['TraceProviders', [
     'providers/registry.js', 'providers/errors.js', 'providers/request.js',
@@ -170,7 +180,7 @@ globalThis.TraceProviders.google = __require('providers/google.js');
 globalThis.TraceProviders.openai = __require('providers/openai-compatible.js');
 globalThis.TraceProviders.openaiCompatible = globalThis.TraceProviders.openai;
 globalThis.TraceCore.__bundleLoaded = true;
-globalThis.TraceCore.__engineVersion = '2.3';
+globalThis.TraceCore.__engineVersion = '3.0';
 })();
 `;
 
@@ -194,7 +204,7 @@ function webCoreBlock(bundleText, newline) {
   ].join(newline);
 }
 
-/** Sinh khối JS cho index.html từ registry prompt (9 chế độ). */
+/** Sinh khối JS cho index.html từ registry prompt (14 chế độ, 12 canonical). */
 function webPromptBlock(newline) {
   const json = value => JSON.stringify(value);
   const lines = [

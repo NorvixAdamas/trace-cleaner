@@ -82,7 +82,7 @@ test('humanize trả text + preservation và requestId', async () => {
   assert.equal(reply.requestId, 'req_a');
   assert.equal(reply.preservation.failed, false);
   assert.equal(reply.preservation.issues.length, 0);
-  assert.equal(reply.promptVersion, '2.3.1');
+  assert.equal(reply.promptVersion, '3.0.0');
 });
 
 test('key sai → cùng mã PROVIDER_AUTH_ERROR như web', async () => {
@@ -134,7 +134,7 @@ test('ping báo engine version và số request đang chạy', async () => {
   const worker = loadWorker();
   const reply = await worker.send({ type: 'ping' });
   assert.equal(reply.ok, true);
-  assert.equal(reply.engineVersion, '2.3');
+  assert.equal(reply.engineVersion, '3.0');
   assert.equal(reply.running, 0);
   assert.ok(reply.promptVersion);
 });

@@ -1,4 +1,8 @@
-# Architecture — Trace Cleaner 2.3
+# Architecture — Trace Cleaner 3.0
+
+> Writing Intelligence 3.0 có kiến trúc riêng trong
+> [HUMANIZE_3_ARCHITECTURE.md](HUMANIZE_3_ARCHITECTURE.md). Tài liệu này mô tả
+> core/parser và các nguyên tắc dùng chung.
 
 ## Nguyên tắc
 

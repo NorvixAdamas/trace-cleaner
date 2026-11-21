@@ -12,6 +12,8 @@
  *   confidence: 0..1, dùng để UI xếp thứ tự và để evaluation tách ngưỡng.
  */
 
+import { documentRevision, PRESERVATION_STATUS } from './shared/schema.js';
+
 export const SEVERITY = Object.freeze({ ERROR: 'error', WARNING: 'warning', INFO: 'info' });
 
 export const CATEGORY = Object.freeze({
@@ -63,6 +65,8 @@ export function makeSuggestion(text, spec) {
     ruleId: spec.ruleId || null,
     paragraph: Number.isInteger(spec.paragraph) ? spec.paragraph : null,
     evidence: spec.evidence || null,
+    revision: spec.revision || documentRevision(text),
+    preservationStatus: spec.preservationStatus || PRESERVATION_STATUS.NOT_CHECKED,
     accepted: false,
   };
 }

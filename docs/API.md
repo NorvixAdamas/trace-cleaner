@@ -1,7 +1,8 @@
 # API và hợp đồng dữ liệu
 
-Mọi kết quả mang `schemaVersion: '1.0'`. Engine báo `ENGINE_VERSION = '2.3'`, prompt báo
-`PROMPT_VERSION = '2.3.1'`.
+Core trả `schemaVersion: '1.0'`; Writing Intelligence 3.0 trả schema `3.0`.
+Engine báo `ENGINE_VERSION = '3.0'`, prompt báo `PROMPT_VERSION = '3.0.0'`.
+API writing đầy đủ nằm trong [HUMANIZE_3_API.md](HUMANIZE_3_API.md).
 
 ## Làm sạch
 
