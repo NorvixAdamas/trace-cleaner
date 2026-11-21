@@ -32,8 +32,36 @@ Số đo thật, sinh bởi `node tools/bench.js --write` ngày 2026-11-20.
 - word diff 50k từ (so với chính nó, có thay đổi): 17.72 ms
 - cleanText (markdown): 2k từ: 1.97 ms · 20k từ: 21.92 ms
 
+## 2.3 — parser cấu trúc và writing intelligence (2026-11-20)
+
+Sinh bởi `node tools/bench_2_3.js`, cùng máy i7-9750H / 16 GB / Node v26.13.0, mỗi case 3 lần,
+báo trung vị. Đây là **số Node**, không phải số trình duyệt.
+
+| Phép đo | Kích thước | Trung vị |
+|---|---|---|
+| ZIP đọc entry (streaming inflate) | 2.7 MB base64 không nén được | **27 ms** |
+| DOCX phân tích cấu trúc (3000 đoạn) | 257 KB XML | **34 ms** |
+| PPTX (2 slide + notes) | fixture | 3 ms |
+| XLSX (1 sheet, shared strings, ngày, công thức) | fixture | 2 ms |
+| PDF (100 trang, text layer) | 100 trang | 5 ms |
+| C2PA xác minh chữ ký PNG đã ký | fixture | 1 ms |
+| Grammar VI (260 đoạn) | ~33k ký tự | 5.6 ms |
+| Grammar EN (200 câu) | ~16k ký tự | 1.7 ms |
+| Consistency VI (260 đoạn) | ~33k ký tự | 0.9 ms |
+| Word diff | 100k ký tự | 1.7 ms |
+
+**Trước/sau đáng chú ý:** cùng file DOCX 3000 đoạn mất **2 649 ms** ở bản đầu của parser 2.3 do
+`lineAt()` quét lại từ đầu chuỗi cho mỗi element (O(n²)); sau khi đổi sang bộ đếm dòng tăng dần còn
+**34 ms** (≈78×). Đây là số đo trước/sau trên cùng máy, cùng fixture.
+
+**Đo trong trình duyệt:** chưa có benchmark DOM/render. Phân tích file trong web chạy trên main
+thread; với file sát trần (3000+ đoạn) người dùng có thể thấy giật — xem giới hạn bên dưới.
+
 ## Giới hạn đã biết
 
 - `diffWords` dùng DP O(n·m) với trần 4.000.000 ô; vượt trần thì rơi về chế độ thay cả khối (một delete + một insert) — chính xác về nội dung nhưng thô hơn khi review.
 - `cleanText` chạy đồng bộ trên main thread; văn bản rất lớn nên chia nhỏ trước khi dán vào web app.
-- ZIP giải nén bằng `DecompressionStream`; đã chặn theo metadata + kiểm tra lại sau khi inflate, nhưng không huỷ được giữa chừng một entry đang nở (Web API không cho ngắt stream theo byte).
+- ZIP (2.3) giải nén streaming và **huỷ được giữa chừng** khi vượt ngân sách: đếm byte theo chunk,
+  `reader.cancel()` ngay khi vượt `maxEntryBytes`/tổng ngân sách, không chờ entry nở xong.
+- Parser OOXML/PDF/C2PA chạy đồng bộ trên main thread. DOCX 3000 đoạn ≈ 34 ms trên desktop;
+  máy yếu hơn hoặc file sát trần sẽ chậm hơn. Chưa có Worker isolation (xem release report 2.3).

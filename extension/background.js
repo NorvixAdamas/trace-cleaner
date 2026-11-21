@@ -108,9 +108,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
+/**
+ * Provider OpenAI-compatible tự nhập host: kiểm tra protocol + quyền origin.
+ * Manifest chỉ khai optional_host_permissions; quyền thật do người dùng cấp
+ * qua chrome.permissions.request ở sidebar (trong user gesture). Thiếu quyền
+ * thì báo rõ cách cấp, KHÔNG xin quyền ngầm từ service worker.
+ */
+async function assertCustomHostAllowed(cfg) {
+  if (cfg.provider !== "openai") return;
+  const raw = String(cfg.base || "").trim();
+  let url;
+  try { url = new URL(raw); } catch { throw providerError(ERROR_CODES.CONFIG_ERROR, "Base URL không hợp lệ."); }
+  if (url.username || url.password) throw providerError(ERROR_CODES.CONFIG_ERROR, "Base URL không được chứa thông tin đăng nhập.");
+  const loopback = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback))
+    throw providerError(ERROR_CODES.CONFIG_ERROR, "Chỉ cho phép https:// (hoặc http://localhost khi phát triển).");
+  if (!chrome.permissions) return;
+  const pattern = `${url.origin}/*`;
+  let granted = false;
+  try { granted = await chrome.permissions.contains({ origins: [pattern] }); } catch { granted = false; }
+  if (!granted)
+    throw providerError(ERROR_CODES.CONFIG_ERROR,
+      `Chưa cấp quyền cho ${pattern}. Mở “API key & model”, bấm Lưu cấu hình và chấp nhận hộp thoại quyền của Chrome.`);
+}
+
 /** Gọi model rồi kiểm tra bảo toàn trên kết quả; không tin prompt. */
 async function humanize(text, cfg, options = {}) {
   if (!String(text || "").trim()) throw providerError(ERROR_CODES.VALIDATION_ERROR, "văn bản rỗng");
+  await assertCustomHostAllowed(cfg);
   const out = await providers.generate(
     { provider: cfg.provider === "openai" ? "openai" : "google", key: cfg.key || "", base: cfg.base || "", model: cfg.model || "" },
     {

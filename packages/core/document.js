@@ -14,14 +14,40 @@
  * chứ không chỉ ở UI.
  */
 
-import { diffWords, diffStats } from './diff.js';
+import { diffWords, diffStats, applyEdits } from './diff.js';
 
 export const DOCUMENT_ERRORS = Object.freeze({
   STALE_REVISION: 'STALE_DOCUMENT_REVISION',
   NO_PROPOSAL: 'NO_PROPOSAL',
   UNKNOWN_PROPOSAL: 'UNKNOWN_PROPOSAL',
   INVALID_REVISION: 'INVALID_REVISION',
+  EDIT_REJECTED: 'EDIT_REJECTED',
 });
+
+/**
+ * Metadata được phép gắn vào proposal. Mọi field khác bị bỏ — đây là lá chắn
+ * chống việc caller (hoặc response của provider) ghi đè id/text/baseRevision
+ * của proposal, tức là phá bất biến mà cơ chế chống stale dựa vào.
+ */
+export const PROPOSAL_META_ALLOWED = Object.freeze([
+  'source', 'provider', 'model', 'mode', 'language', 'requestId', 'reason', 'kind', 'confidence',
+]);
+
+function sanitizeProposalMeta(meta) {
+  const out = {};
+  if (!meta || typeof meta !== 'object') return out;
+  for (const key of PROPOSAL_META_ALLOWED) {
+    if (Object.prototype.hasOwnProperty.call(meta, key) && meta[key] !== undefined) out[key] = meta[key];
+  }
+  // `kind` và `confidence` có miền giá trị hữu hạn: giá trị lạ bị bỏ, không đoán.
+  if (out.kind !== undefined && !['replace', 'suggestion', 'edit'].includes(out.kind)) delete out.kind;
+  if (out.confidence !== undefined) {
+    const value = Number(out.confidence);
+    if (!Number.isFinite(value) || value < 0 || value > 1) delete out.confidence;
+    else out.confidence = value;
+  }
+  return out;
+}
 
 let counter = 0;
 const nextId = prefix => `${prefix}_${Date.now().toString(36)}_${(counter += 1).toString(36)}`;
@@ -52,23 +78,135 @@ export class DocumentSession {
     this.lastProposal = null;
     /** @type {Array<object>} proposal bị từ chối vì stale, để UI hiển thị */
     this.staleProposals = [];
+    /** @type {Array<object>} proposal người dùng chủ động bỏ (không áp dụng) */
+    this.rejectedProposals = [];
   }
 
   get revision() { return this.revisions[this.pointer].id; }
 
-  /** Đề xuất bản mới, chưa áp dụng. Proposal luôn gắn với revision hiện tại. */
+  /**
+   * Đề xuất bản mới, chưa áp dụng. Proposal luôn gắn với revision hiện tại.
+   * Metadata chỉ được phép ở `PROPOSAL_META_ALLOWED`; `id`, `text`,
+   * `baseRevision`, `baseText` không thể bị ghi đè từ bên ngoài.
+   */
   propose(text, meta = {}) {
-    const proposal = {
+    const proposal = Object.freeze({
       id: nextId('prop'),
       at: new Date().toISOString(),
+      kind: 'replace',
       text: String(text ?? ''),
       baseRevision: this.revision,
       baseText: this.working,
-      ...meta,
-    };
+      ...sanitizeProposalMeta(meta),
+    });
     this.proposed = proposal.text;
     this.lastProposal = proposal;
     return proposal;
+  }
+
+  /**
+   * Đề xuất từ một tập edit cục bộ (thay vì cả văn bản). Edit được áp trên bản
+   * đang sửa; edit lệch vị trí bị từ chối, không đoán.
+   */
+  proposeEdits(edits, options = {}) {
+    const result = applyEdits(this.working, edits, { sourceRevision: this.revision });
+    if (!result.applied.length) {
+      return errorResult(DOCUMENT_ERRORS.EDIT_REJECTED,
+        'Không áp được edit nào: vị trí/nội dung không khớp bản hiện tại.',
+        { rejected: result.rejected, conflicts: result.conflicts });
+    }
+    const proposal = this.propose(result.text, { ...options.meta, source: options.source || 'local-edit' });
+    return { ok: true, proposal, applied: result.applied, rejected: result.rejected };
+  }
+
+  /**
+   * Áp MỘT edit cục bộ đã được người dùng duyệt, không cần proposal toàn văn.
+   * Dùng cho danh sách gợi ý grammar/style: mỗi gợi ý là một edit độc lập.
+   * Offset sai hoặc nội dung đã đổi ⇒ từ chối, không ghi bừa.
+   */
+  applyLocalEdit(edit, meta = {}) {
+    const result = applyEdits(this.working, [{
+      start: edit.start,
+      end: edit.end,
+      find: edit.original ?? edit.find,
+      replace: edit.replacement ?? edit.replace,
+    }], { sourceRevision: this.revision });
+    if (!result.applied.length || result.rejected.length || result.conflicts.length) {
+      return errorResult(DOCUMENT_ERRORS.EDIT_REJECTED,
+        'Gợi ý không còn khớp văn bản hiện tại (offset hoặc nội dung đã đổi).',
+        { rejected: result.rejected, conflicts: result.conflicts });
+    }
+    this.accepted = result.text;
+    this.working = result.text;
+    this.proposed = null;
+    this.lastProposal = null; // gợi ý còn lại dùng offset cũ → không còn hiệu lực
+    const revision = {
+      id: nextId('rev'),
+      at: new Date().toISOString(),
+      action: 'accept-suggestion',
+      proposalId: null,
+      ruleId: edit.ruleId || null,
+      category: edit.category || null,
+      edit: {
+        start: edit.start,
+        end: edit.end,
+        original: edit.original ?? edit.find,
+        replacement: edit.replacement ?? edit.replace,
+      },
+      meta: sanitizeProposalMeta(meta),
+      text: this.working,
+    };
+    this.revisions = this.revisions.slice(0, this.pointer + 1).concat(revision);
+    this.pointer = this.revisions.length - 1;
+    return { ok: true, revision };
+  }
+
+  /**
+   * Chấp nhận MỘT gợi ý (grammar/style) trên proposal hiện tại.
+   * Đây là đường đi riêng cho "duyệt từng gợi ý": không thay cả tài liệu.
+   */
+  acceptEdit(proposalId, edit, meta = {}) {
+    const proposal = this.lastProposal;
+    if (!proposal) return errorResult(DOCUMENT_ERRORS.NO_PROPOSAL, 'Không có đề xuất nào để chấp nhận.');
+    if (proposalId && proposalId !== proposal.id) {
+      return errorResult(DOCUMENT_ERRORS.UNKNOWN_PROPOSAL, 'Đề xuất này không còn hiệu lực.', { proposalId });
+    }
+    if (!this.isProposalCurrent(proposal)) {
+      this.staleProposals.push({ ...proposal, rejectedAt: new Date().toISOString(), reason: 'stale' });
+      this.lastProposal = null;
+      return errorResult(DOCUMENT_ERRORS.STALE_REVISION,
+        'Tài liệu đã đổi sau khi gợi ý này được tạo. Hãy phân tích lại.',
+        { proposalId: proposal.id, currentRevision: this.revision });
+    }
+    const result = applyEdits(this.working, [{
+      start: edit.start,
+      end: edit.end,
+      find: edit.original ?? edit.find,
+      replace: edit.replacement ?? edit.replace,
+    }], { sourceRevision: this.revision });
+    if (!result.applied.length || result.rejected.length || result.conflicts.length) {
+      return errorResult(DOCUMENT_ERRORS.EDIT_REJECTED,
+        'Gợi ý không còn khớp văn bản hiện tại (offset hoặc nội dung đã đổi).',
+        { rejected: result.rejected, conflicts: result.conflicts });
+    }
+    this.accepted = result.text;
+    this.working = result.text;
+    this.proposed = null;
+    // Sau khi sửa một chỗ, các gợi ý còn lại có offset cũ → không còn hợp lệ.
+    this.lastProposal = null;
+    const revision = {
+      id: nextId('rev'),
+      at: new Date().toISOString(),
+      action: 'accept-suggestion',
+      proposalId: proposal.id,
+      ruleId: edit.ruleId || null,
+      edit: { start: edit.start, end: edit.end, original: edit.original ?? edit.find, replacement: edit.replacement ?? edit.replace },
+      meta: sanitizeProposalMeta(meta),
+      text: this.working,
+    };
+    this.revisions = this.revisions.slice(0, this.pointer + 1).concat(revision);
+    this.pointer = this.revisions.length - 1;
+    return { ok: true, revision };
   }
 
   /** Proposal này còn dùng được không? */
@@ -138,12 +276,20 @@ export class DocumentSession {
     return this.acceptProposal(undefined, options);
   }
 
-  /** Bỏ đề xuất, không đụng bản đang sửa. */
+  /** Bỏ đề xuất, không đụng bản đang sửa. Lịch sử từ chối được giữ để rà soát. */
   reject(proposalId) {
     const rejected = this.lastProposal;
     if (proposalId && rejected && proposalId !== rejected.id) return null;
     this.proposed = null;
-    if (rejected) this.lastProposal = null;
+    if (rejected) {
+      this.rejectedProposals.push({
+        id: rejected.id,
+        at: new Date().toISOString(),
+        source: rejected.source || null,
+        words: (rejected.text.trim().match(/\S+/g) || []).length,
+      });
+      this.lastProposal = null;
+    }
     return rejected ? rejected.text : null;
   }
 
@@ -204,12 +350,35 @@ export class DocumentSession {
     return { ops, stats: diffStats(ops) };
   }
 
+  /**
+   * So sánh hai revision bất kỳ (C6). Không đụng bản đang sửa.
+   * @returns {{from:object|null, to:object|null, ops:Array<object>, stats:object, error?:string}}
+   */
+  compare(revisionA, revisionB) {
+    const from = this.revisions.find(item => item.id === revisionA);
+    const to = this.revisions.find(item => item.id === revisionB);
+    if (!from || !to) return { from: null, to: null, ops: [], stats: { added: 0, removed: 0, kept: 0 }, error: DOCUMENT_ERRORS.INVALID_REVISION };
+    const ops = diffWords(from.text, to.text);
+    return { from: { id: from.id, at: from.at, action: from.action }, to: { id: to.id, at: to.at, action: to.action }, ops, stats: diffStats(ops) };
+  }
+
+  /** Khôi phục nội dung của một revision cũ thành revision MỚI (không xoá lịch sử). */
+  restoreRevision(revisionId) {
+    const target = this.revisions.find(item => item.id === revisionId);
+    if (!target) return errorResult(DOCUMENT_ERRORS.INVALID_REVISION, 'Revision không tồn tại.', { revisionId });
+    const revision = this.commit(target.text, 'restore-revision');
+    revision.restoredFrom = target.id;
+    return { ok: true, revision };
+  }
+
   history() {
     return this.revisions.map((item, index) => ({
       id: item.id,
       at: item.at,
       action: item.action,
       words: (item.text.trim().match(/\S+/g) || []).length,
+      proposalId: item.proposalId || null,
+      ruleId: item.ruleId || null,
       current: index === this.pointer,
     }));
   }
@@ -227,6 +396,8 @@ export class DocumentSession {
       canRedo: this.canRedo(),
       pendingProposal: this.pendingProposal() ? { ...this.pendingProposal() } : null,
       staleCount: this.staleProposals.length,
+      rejectedCount: this.rejectedProposals.length,
+      revisionCount: this.revisions.length,
     };
   }
 }

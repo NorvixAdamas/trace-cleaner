@@ -37,6 +37,11 @@ const BUNDLE_MODULES = [
   'core/document.js',
   'core/cleaning.js',
   'core/limits.js',
+  'core/zip.js',
+  'core/xml.js',
+  'core/ooxml.js',
+  'core/pdf.js',
+  'core/c2pa.js',
   'writing/prompts.js',
   'writing/suggestions.js',
   'writing/language.js',
@@ -54,6 +59,7 @@ const CORE_GLOBALS = [
   ['TraceCore', [
     'core/unicode.js', 'core/entities.js', 'core/markdown.js', 'core/preservation.js',
     'core/diff.js', 'core/document.js', 'core/cleaning.js', 'core/limits.js',
+    'core/zip.js', 'core/xml.js', 'core/ooxml.js', 'core/pdf.js', 'core/c2pa.js',
   ]],
   ['TraceWriting', [
     'writing/prompts.js', 'writing/suggestions.js', 'writing/language.js', 'writing/grammar/index.js',
@@ -164,7 +170,7 @@ globalThis.TraceProviders.google = __require('providers/google.js');
 globalThis.TraceProviders.openai = __require('providers/openai-compatible.js');
 globalThis.TraceProviders.openaiCompatible = globalThis.TraceProviders.openai;
 globalThis.TraceCore.__bundleLoaded = true;
-globalThis.TraceCore.__engineVersion = '2.2';
+globalThis.TraceCore.__engineVersion = '2.3';
 })();
 `;
 

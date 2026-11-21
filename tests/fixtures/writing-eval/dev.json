@@ -1,0 +1,158 @@
+{
+  "name": "dev",
+  "note": "Tập phát triển: dùng để chỉnh luật. Mọi câu đều là ví dụ tự viết, không chứa dữ liệu người dùng.",
+  "cases": [
+    {
+      "id": "vi-typo-su-ly",
+      "language": "vi",
+      "text": "Tôi đã sử lý xong hồ sơ.",
+      "expect": [{ "category": "spelling", "original": "sử lý", "replacement": "xử lý" }],
+      "preserve": ["hồ sơ"]
+    },
+    {
+      "id": "vi-typo-xu-dung",
+      "language": "vi",
+      "text": "Họ xử dụng công cụ này mỗi ngày.",
+      "expect": [{ "category": "spelling", "original": "xử dụng", "replacement": "sử dụng" }],
+      "preserve": ["công cụ"]
+    },
+    {
+      "id": "vi-style-cung-nhu-la",
+      "language": "vi",
+      "text": "Cũng như là các tài liệu trước, bản này cần rà lại.",
+      "expect": [{ "category": "style", "kind": "suggestion", "original": "Cũng như là", "replacement": "cũng như" }]
+    },
+    {
+      "id": "vi-natural-tuy-nhien-thi",
+      "language": "vi",
+      "text": "Tuy nhiên thì kết quả vẫn tốt.",
+      "expect": [{ "category": "style", "kind": "suggestion", "original": "Tuy nhiên thì", "replacement": "tuy nhiên" }]
+    },
+    {
+      "id": "vi-reduplication-allowed",
+      "language": "vi",
+      "text": "Người người nhà nhà đều vui.",
+      "expect": []
+    },
+    {
+      "id": "vi-double-space-repeat",
+      "language": "vi",
+      "text": "Tôi  rất vui và và hài lòng.",
+      "expect": [
+        { "category": "grammar", "original": "và và", "replacement": "và" },
+        { "category": "punctuation", "original": "  ", "replacement": " " }
+      ]
+    },
+    {
+      "id": "vi-decomposed",
+      "language": "vi",
+      "text": "Tôi đã học.",
+      "expect": [
+        { "category": "spelling", "original": "ã", "replacement": "ã" },
+        { "category": "spelling", "original": "ọ", "replacement": "ọ" }
+      ]
+    },
+    {
+      "id": "vi-missing-space-after-period",
+      "language": "vi",
+      "text": "Câu một.Câu hai rõ ràng.",
+      "expect": [{ "category": "punctuation", "original": ".", "replacement": ". " }]
+    },
+    {
+      "id": "vi-decimal-comma",
+      "language": "vi",
+      "text": "Giá 1,5 triệu và 10,25 điểm.",
+      "expect": []
+    },
+    {
+      "id": "vi-abbreviation-dot",
+      "language": "vi",
+      "text": "Ở TP.HCM có nhiều người làm nghề này.",
+      "expect": []
+    },
+    {
+      "id": "en-would-of",
+      "language": "en",
+      "text": "I would of gone there.",
+      "expect": [{ "category": "grammar", "original": "would of", "replacement": "would have" }]
+    },
+    {
+      "id": "en-has-went",
+      "language": "en",
+      "text": "She has went home.",
+      "expect": [{ "category": "grammar", "original": "has went", "replacement": "has gone" }]
+    },
+    {
+      "id": "en-article-acronym",
+      "language": "en",
+      "text": "She is a MBA student.",
+      "expect": [{ "category": "grammar", "original": "a", "replacement": "an" }]
+    },
+    {
+      "id": "en-article-number",
+      "language": "en",
+      "text": "It takes a 8-hour shift.",
+      "expect": [{ "category": "grammar", "original": "a", "replacement": "an" }]
+    },
+    {
+      "id": "en-article-university",
+      "language": "en",
+      "text": "This is a university and an hour.",
+      "expect": []
+    },
+    {
+      "id": "en-there-is-plural",
+      "language": "en",
+      "text": "There is many reasons for this.",
+      "expect": [{ "category": "grammar", "original": "There is many", "replacement": "There are many" }]
+    },
+    {
+      "id": "en-much-friends",
+      "language": "en",
+      "text": "He has much friends here.",
+      "expect": [{ "category": "word-choice", "original": "much friends", "replacement": "many friends" }]
+    },
+    {
+      "id": "en-its-a",
+      "language": "en",
+      "text": "Its a good idea.",
+      "expect": [{ "category": "grammar", "original": "Its", "replacement": "It's" }]
+    },
+    {
+      "id": "en-their-is",
+      "language": "en",
+      "text": "Their is a problem.",
+      "expect": [{ "category": "grammar", "original": "Their", "replacement": "There" }]
+    },
+    {
+      "id": "en-loose-weight",
+      "language": "en",
+      "text": "Do not loose weight too fast.",
+      "expect": [{ "category": "word-choice", "original": "loose", "replacement": "lose" }]
+    },
+    {
+      "id": "en-then-than",
+      "language": "en",
+      "text": "It is better then before.",
+      "expect": [{ "category": "word-choice", "kind": "suggestion", "original": "then", "replacement": "than" }]
+    },
+    {
+      "id": "en-form-false-positive",
+      "language": "en",
+      "text": "Fill the form and take it from here.",
+      "expect": []
+    },
+    {
+      "id": "en-protected-segments",
+      "language": "en",
+      "text": "Run `has went` and see https://example.com/a,b before 12.30.",
+      "expect": []
+    },
+    {
+      "id": "en-have-has",
+      "language": "en",
+      "text": "She have a car.",
+      "expect": [{ "category": "grammar", "original": "She have", "replacement": "She has" }]
+    }
+  ]
+}

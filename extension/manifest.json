@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Trace Cleaner — sidebar",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Sidebar quét & làm sạch ký tự ẩn, kiểm tra bảo toàn nội dung, viết lại có duyệt.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
@@ -9,6 +9,11 @@
     "https://generativelanguage.googleapis.com/*",
     "https://api.openai.com/*",
     "https://openrouter.ai/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": {
@@ -25,7 +30,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
-      "js": ["core/bundle.js", "sidebar.js", "content.js"],
+      "js": ["core/bundle.js", "config.js", "sidebar.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": false
     }

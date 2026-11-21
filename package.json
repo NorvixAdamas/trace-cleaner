@@ -1,6 +1,6 @@
 {
   "name": "trace-cleaner",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "description": "Trace Cleaner — làm sạch Unicode, chẩn đoán văn bản, kiểm tra bảo toàn nội dung, forensics file.",
@@ -13,10 +13,16 @@
     "build:guide": "python tools/build_guide.py",
     "check:guide": "python tools/build_guide.py --check",
     "check:extension": "node tools/check_extension.js",
+    "test:e2e": "playwright test",
+    "eval:writing": "node tools/eval_writing.js --check",
     "bench": "node tools/bench.js --write",
-    "check": "npm run check:guide && npm run check:extension && npm test"
+    "bench:2.3": "node tools/bench_2_3.js",
+    "check": "npm run check:guide && npm run check:extension && npm run eval:writing && npm test"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1"
   }
 }

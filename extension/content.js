@@ -14,14 +14,12 @@
     else if (t.tagName === "INPUT" && /^(text|search|url|email|tel|)$/i.test(t.type || "text")) lastEditable = t;
   }, true);
 
-  const getCfg = () => new Promise(res => {
-    try { chrome.storage.local.get("traceCfg", o => res(o.traceCfg || {})); }
-    catch { res({}); }
-  });
-  const saveCfg = cfg => new Promise(res => {
-    try { chrome.storage.local.set({ traceCfg: cfg }, () => res(true)); }
-    catch { res(false); }
-  });
+  // Key mặc định chỉ ở chrome.storage.session; local chỉ khi người dùng tick ghi nhớ.
+  const config = () => window.TraceConfig;
+  const getCfg = () => (config() ? config().load() : Promise.resolve({}));
+  const saveCfg = cfg => (config() ? config().save(cfg) : Promise.resolve(false));
+  const clearKey = () => (config() ? config().clearKey() : Promise.resolve(false));
+  const ensurePermission = base => (config() ? config().ensurePermission(base) : Promise.resolve({ ok: false, error: "thiếu config.js" }));
 
   // ── prompt dùng chung với web app ──
   const PROMPT_KEY = "tracePrompt";
@@ -141,7 +139,9 @@
       insert: insertIntoPage,
       close: () => ui.show(false),
       loadCfg: getCfg,
-      saveCfg
+      saveCfg,
+      clearKey,
+      ensurePermission
     });
     ui.show(false);
   }

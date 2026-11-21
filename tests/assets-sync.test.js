@@ -37,12 +37,14 @@ test('extension/core/prompts.js là bản copy của registry', () => {
   assert.match(copy.split('\n')[0], /AUTO-GENERATED/);
 });
 
-test('manifest nạp core trước sidebar và version 2.2', () => {
+test('manifest nạp core + config trước sidebar, version 2.3.0', () => {
   const manifest = JSON.parse(read('extension/manifest.json'));
-  assert.equal(manifest.version, '2.2.0');
-  assert.deepEqual(manifest.content_scripts[0].js.slice(0, 2), ['core/bundle.js', 'sidebar.js']);
+  assert.equal(manifest.version, '2.3.0');
+  assert.deepEqual(manifest.content_scripts[0].js.slice(0, 3), ['core/bundle.js', 'config.js', 'sidebar.js']);
+  assert.ok(manifest.optional_host_permissions.includes('https://*/*'));
   const panel = read('extension/panel.html');
-  assert.ok(panel.indexOf('src="core/bundle.js"') < panel.indexOf('src="sidebar.js"'), 'panel nạp sidebar trước core');
+  assert.ok(panel.indexOf('src="core/bundle.js"') < panel.indexOf('src="config.js"'), 'panel nạp config trước core');
+  assert.ok(panel.indexOf('src="config.js"') < panel.indexOf('src="sidebar.js"'), 'panel nạp sidebar trước config');
 });
 
 test('index.html chỉ có một cặp marker prompt', () => {

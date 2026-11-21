@@ -4,6 +4,8 @@
 > Tài liệu này trả lời đúng một câu hỏi: **có những tín hiệu nào cho biết một nội dung do AI tạo ra, tín hiệu nào thật, tín hiệu nào là truyền thuyết, và mỗi tín hiệu cho phép bạn kết luận đến đâu.**
 >
 > Nguyên tắc xuyên suốt: **thiếu tín hiệu không chứng minh người viết.** C2PA nói thẳng điều này; OpenAI cũng nói thẳng điều này. Bất kỳ ai làm ngược lại đang bán hàng, không đang làm forensics.
+>
+> **Phạm vi sử dụng:** tài liệu này để *đọc* bằng chứng và *cải thiện chất lượng viết*, không phải playbook che giấu nguồn gốc. Trace Cleaner không tạo watermark giả, không xoá provenance, không hướng dẫn qua mặt detector. Các mục về tấn công/stealth được giữ lại để giải thích vì sao chúng không đáng theo đuổi — không phải để làm theo.
 
 ---
 
@@ -710,7 +712,7 @@ Ba bẫy phải loại trừ trước khi kết luận:
 
 C2PA Implementation Guidance tự thừa nhận: manifest *"may be routinely removed or corrupted by legacy or non-C2PA capable platforms"*. IPTC FAQ: *"**C2PA metadata is removable by design**"*.
 
-### 8.4 "Forensic stealth" — xoá watermark không đủ để trốn
+### 8.4 Vì sao "forensic stealth" không phải mục tiêu của sản phẩm
 
 arXiv 2605.09203 (2026): đánh giá 6 attack thuộc 4 chiến lược xoá watermark.
 
@@ -718,7 +720,7 @@ arXiv 2605.09203 (2026): đánh giá 6 attack thuộc 4 chiến lược xoá wat
 - Ở 1% FPR, detector chuyên biệt bắt **≥99%** output đã xoá.
 - Chỉ **1/750** output vừa xoá được watermark, vừa trong ngưỡng fidelity, vừa không bị bắt.
 
-Kết luận: **watermark có thể biến mất nhưng deniability thì không được khôi phục.** Đây là ý tưởng quan trọng nhất của cả tài liệu này: *xoá dấu vết tạo ra dấu vết mới.*
+Kết luận: **watermark có thể biến mất nhưng deniability thì không được khôi phục.** Đây là lý do Trace Cleaner không cung cấp tính năng né detector: vừa không hiệu quả, vừa biến một công cụ viết thành công cụ che giấu nguồn gốc. Việc nên làm là viết rõ hơn, giữ nguyên dữ kiện, và công bố cách bạn dùng AI nếu hoàn cảnh yêu cầu.
 
 ---
 
@@ -768,15 +770,17 @@ Ba câu hỏi phải hỏi mọi vendor detector:
 
 ## 10. Playbook theo vai
 
-### 10.1 Bạn là người viết — muốn văn bản không mang dấu vết
+### 10.1 Bạn là người viết — muốn văn bản tốt hơn
 
-Thứ tự hiệu quả/chi phí:
+Thứ tự hiệu quả/chi phí (theo chất lượng, không theo "né detector"):
 
-1. **Viết lại bằng tay những câu quan trọng.** Đây là cách duy nhất hạ được watermark thống kê (25% từ đổi → 17% detect).
-2. **Phá độ đều.** Một câu 4 từ. Một câu 45 từ. Đây là thứ AI không làm tự nhiên và regex không sửa được.
-3. **Cắt mọi frame ở §5.4.** Đặc biệt nhóm "not X but Y" và "without sacrificing".
-4. **Bỏ tricolon và bold lead-in.** Hình thức song song là tell mà không detector nào đo được nhưng người đọc nhận ra ngay.
-5. **Thêm một chi tiết không hoàn hảo**: một thừa nhận, một giới hạn, một con số xấu. Văn người có cái đó.
+1. **Sửa lỗi thật trước.** Chính tả, chia động từ, dấu câu, quán ngữ. Đây là thứ người đọc nhận ra ngay và công cụ deterministic làm tốt.
+2. **Đa dạng độ dài câu có lý do.** Câu ngắn để chốt ý, câu dài để giải thích quan hệ nhân quả — không phá nhịp một cách máy móc.
+3. **Cắt cấu trúc rỗng.** "not X but Y", "without sacrificing", tricolon và bold lead-in chỉ nên ở lại khi chúng thực sự mang nghĩa.
+4. **Giữ dữ kiện và mức độ chắc chắn.** Số, ngày, phủ định, điều kiện, nguồn — Trace Cleaner kiểm tra đúng những thứ này sau khi model viết lại.
+5. **Nói rõ giới hạn.** Một thừa nhận, một điều kiện áp dụng, một con số xấu làm văn bản đáng tin hơn — và đó là việc của người viết, không phải của regex.
+
+Điều không nên làm: đổi em dash thành dấu phẩy rồi coi là xong, hoặc thay từ đồng nghĩa hàng loạt để "qua" một detector. Cả hai đều làm văn kém đi mà không giải quyết câu hỏi nguồn gốc.
 6. **Strip codepoint** chỉ để sạch pipeline và an toàn — không phải để "trốn".
 
 Đừng làm: đổi em dash thành dấu phẩy rồi coi là xong. Đó là sửa triệu chứng đã hết thời.

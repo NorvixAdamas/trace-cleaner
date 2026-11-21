@@ -1,4 +1,4 @@
-# Architecture — Trace Cleaner 2.2
+# Architecture — Trace Cleaner 2.3
 
 ## Nguyên tắc
 

@@ -16,8 +16,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Unit + regression + parity
+      - name: Unit + regression + security + writing eval
         run: node --test tests/*.test.js
+      - name: Writing evaluation metrics (dev + held-out)
+        run: node tools/eval_writing.js --check
       - name: Guide reproducible
         run: python tools/build_guide.py --check
       - name: Generated artifacts in sync
@@ -26,3 +28,25 @@ jobs:
         run: node tools/check_extension.js
       - name: extension/core in sync
         run: python tools/sync_core.py --check
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Chrome extension + web rewrite E2E
+        # Extension chỉ load được ở chế độ headed; xvfb cung cấp display ảo.
+        run: xvfb-run -a npx playwright test
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: test-results/
+          retention-days: 7

@@ -8,8 +8,11 @@ Công cụ **chạy tại máy** để:
 - viết lại văn bản bằng model của bạn (Gemini / OpenAI-compatible) **và kiểm tra lại** xem số,
   URL, ngày, phủ định, điều kiện, trích dẫn, cấu trúc Markdown có bị mất không;
 - rà soát thay đổi theo từng bước: diff, chấp nhận/từ chối, undo/redo, khôi phục bản gốc, export;
-- gợi ý ngữ pháp/chính tả **deterministic, offline** cho tiếng Anh và một phần tiếng Việt;
-- đọc metadata file `.docx/.pptx/.xlsx/.pdf/ảnh` và phân tích ELA cục bộ, có giới hạn tài nguyên.
+- gợi ý ngữ pháp/chính tả **deterministic, offline** cho tiếng Anh và tiếng Việt, kèm phân tích
+  nhất quán toàn tài liệu; duyệt **từng** gợi ý với undo/redo;
+- đọc file `.docx/.pptx/.xlsx/.pdf/ảnh` bằng parser cấu trúc: DOCX tracked changes + comment,
+  PPTX speaker notes, XLSX worksheet/ô/ngày/công thức, PDF trang + text layer, C2PA có xác minh
+  chữ ký; mọi giới hạn tài nguyên được áp trong lúc đọc.
 
 Không có backend. Không có telemetry. Văn bản/file chỉ rời máy khi bạn bấm Humanize và đã nhập
 API key — xem [docs/PRIVACY.md](docs/PRIVACY.md).
@@ -22,9 +25,9 @@ API key — xem [docs/PRIVACY.md](docs/PRIVACY.md).
 
 | Thành phần | Version |
 |---|---|
-| Sản phẩm (web + extension + CLI) | **2.2.0** |
-| Prompt registry (`PROMPT_VERSION`) | **2.2.0** — tách riêng khỏi version sản phẩm |
-| Engine (`ENGINE_VERSION`) | **2.2** |
+| Sản phẩm (web + extension + CLI) | **2.3.0** |
+| Prompt registry (`PROMPT_VERSION`) | **2.3.0** — tách riêng khỏi version sản phẩm |
+| Engine (`ENGINE_VERSION`) | **2.3** |
 | Schema kết quả | `1.0` |
 
 ## Dùng web
@@ -43,19 +46,26 @@ Bản công khai: `https://norvixadamas.github.io/trace-cleaner/`.
 `index.html` dùng **cùng engine với extension**: bundle sinh tự động từ `packages/core` được nhúng
 giữa marker `@generated:core:start/end`. Trang chỉ còn adapter mỏng, không có bản sao thuật toán.
 
-## Extension Chrome (MV3, v2.2.0)
+## Extension Chrome (MV3, v2.3.0)
 
 1. `chrome://extensions` → bật Developer mode → **Load unpacked** → chọn thư mục `extension/`.
 2. Bấm icon để mở Side Panel, hoặc `Alt+Shift+S` để mở sidebar nổi trên trang.
-3. Nhập API key trong mục "API key & model" (mặc định chỉ dùng trong phiên; tick "ghi nhớ" mới lưu
-   vào `chrome.storage.local`, có nút xoá).
+3. Nhập API key trong mục "API key & model". Mặc định key chỉ nằm trong `chrome.storage.session`
+   (mất khi đóng trình duyệt); tick **"Ghi nhớ API key trên máy này"** mới ghi
+   `chrome.storage.local`. Có nút **Xoá key**. Key cũ do bản ≤2.2 để lại trong local được chuyển
+   sang session khi nạp cấu hình.
 4. Chọn kiểu viết lại trong ô cạnh nút Markdown (9 chế độ, cùng bộ với web).
 5. Nút **Huỷ** dừng request đang chạy (khác với timeout). Nếu kiểm tra bảo toàn thất bại, nút
    "Dán vào trang" yêu cầu xác nhận rõ ràng.
 
-Quyền: `storage`, `activeTab`, `scripting`, `sidePanel`; host chỉ 3 domain API. Content script chạy
-trên `http(s)` (không còn `file://`) để có sidebar nổi — lý do và kế hoạch thu hẹp:
-[docs/SECURITY.md](docs/SECURITY.md).
+Quyền: `storage`, `activeTab`, `scripting`, `sidePanel`; host bắt buộc chỉ 3 domain API, host tuỳ
+biến nằm trong `optional_host_permissions` và chỉ được cấp khi bạn bấm Lưu cấu hình (Chrome hỏi
+đúng origin). Provider tự nhập phải là `https://` (hoặc `http://localhost` khi phát triển);
+background từ chối request nếu origin chưa được cấp quyền.
+
+Content script vẫn chạy trên `http(s)` (không `file://`) để `Alt+Shift+S` hoạt động trên mọi trang.
+Đây là trade-off đã được đo bằng Chrome E2E: sidebar không can thiệp nút của trang và chỉ dựng DOM
+khi người dùng mở. Chi tiết + hướng thu hẹp còn lại: [docs/SECURITY.md](docs/SECURITY.md).
 
 ## CLI
 
@@ -72,13 +82,18 @@ nguyên CRLF và không truy cập mạng.
 ## Test
 
 ```bash
-npm test                              # 193 test, không cần npm install
+npm test                              # 311 test Node (unit + integration + security)
+npx playwright test                    # 6 Chrome E2E thật (extension + web rewrite)
 node tools/sync_assets.js --check     # bundle + prompt + index.html khớp nguồn
 python tools/sync_core.py --check     # extension/core khớp packages/core
 node tools/check_extension.js         # manifest, thứ tự nạp core, artifact, icon
 python tools/build_guide.py --check   # guide trong index.html khớp GUIDE.md
-node tools/bench.js                   # benchmark thật (tuỳ chọn)
+node tools/eval_writing.js --check    # eval writing dev + held-out khớp docs
+node tools/bench_2_3.js               # benchmark parser 2.3 (tuỳ chọn)
 ```
+
+`npx playwright install chromium` một lần trước khi chạy E2E. E2E extension mở Chromium headed
+(`headless:false`) vì Chrome không load unpacked extension ở headless shell; CI dùng `xvfb-run`.
 
 ## Sinh lại artifact (sau khi sửa `packages/`)
 
@@ -95,13 +110,18 @@ CI fail nếu artifact lệch nguồn (`sync_assets.js --check`, `sync_core.py -
 ```
 index.html            app 1 file (Pages dùng trực tiếp), adapter + UI + guide
 GUIDE.md              nguồn guide, build vào index.html
-packages/core/        unicode, entities, preservation, diff, document, markdown, cleaning, limits
-packages/writing/     prompts (9 chế độ), suggestions, language, grammar/{en,vi}
+packages/core/        unicode, entities, preservation, diff, document, markdown, cleaning, limits,
+                      zip (streaming), xml (strict), ooxml, pdf, c2pa
+tools/                sync_assets, sync_core, build_guide, check_extension, trace_scan, bench,
+                      bench_2_3, eval_writing, make_c2pa_fixture
+packages/writing/     prompts (9 chế độ), suggestions, language, consistency, evaluation,
+                      grammar/{en,vi,index}
 packages/providers/   errors, request (timeout/cancel/registry), google, openai-compatible, registry
-extension/            MV3: background (service worker), sidebar, content, panel, core/ (sinh tự động)
-tools/                sync_assets, sync_core, build_guide, check_extension, trace_scan, bench
-tests/                unit + integration + parity (193 test)
-docs/                 kiến trúc, API, bảo mật, privacy, testing, audit, roadmap, báo cáo 2.2
+extension/            MV3: background (service worker), config (key policy + host permission),
+                      sidebar, content, panel, core/ (sinh tự động)
+tests/                unit + integration + parity + security + writing eval + e2e/ (Playwright)
+docs/                 kiến trúc, API, bảo mật, privacy, testing, audit, roadmap, benchmark,
+                      báo cáo 2.2 (lịch sử) và 2.3
 ```
 
 ## Giấy phép
@@ -110,7 +130,9 @@ docs/                 kiến trúc, API, bảo mật, privacy, testing, audit, r
 
 ## Tài liệu
 
-- [docs/TRACE_CLEANER_2_2_BASELINE.md](docs/TRACE_CLEANER_2_2_BASELINE.md) — baseline trước sprint
+- [docs/TRACE_CLEANER_2_3_RELEASE_REPORT.md](docs/TRACE_CLEANER_2_3_RELEASE_REPORT.md) — báo cáo phát hành 2.3 (A–H)
+- [docs/WRITING_EVAL.md](docs/WRITING_EVAL.md) — precision/recall trên dev + held-out
+- [docs/TRACE_CLEANER_2_2_BASELINE.md](docs/TRACE_CLEANER_2_2_BASELINE.md) — baseline trước sprint 2.2 (lịch sử)
 - [docs/TRACE_CLEANER_2_2_FINAL_REPORT.md](docs/TRACE_CLEANER_2_2_FINAL_REPORT.md) — báo cáo A–K
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/API.md](docs/API.md)
 - [docs/SECURITY.md](docs/SECURITY.md) · [docs/PRIVACY.md](docs/PRIVACY.md)

@@ -1,7 +1,7 @@
 # API và hợp đồng dữ liệu
 
-Mọi kết quả mang `schemaVersion: '1.0'`. Engine báo `ENGINE_VERSION = '2.2'`, prompt báo
-`PROMPT_VERSION = '2.2.0'`.
+Mọi kết quả mang `schemaVersion: '1.0'`. Engine báo `ENGINE_VERSION = '2.3'`, prompt báo
+`PROMPT_VERSION = '2.3.0'`.
 
 ## Làm sạch
 
@@ -10,7 +10,7 @@ TraceCore.cleanText(text, { markdown: true }) // →
 {
   text, stats, audit: [{ index, char, category, action }],
   warnings: [], log: {}, segments, offsetSystem: 'utf16-source',
-  engineVersion: '2.2', schemaVersion: '1.0'
+  engineVersion: '2.3', schemaVersion: '1.0'
 }
 ```
 

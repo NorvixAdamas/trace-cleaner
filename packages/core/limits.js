@@ -23,6 +23,12 @@ export const PARSER_LIMITS = Object.freeze({
   maxXmlBytes: 16 * MB,
   /** Độ sâu lồng thẻ tối đa (~64 vẫn dư cho OOXML hợp lệ). */
   maxXmlDepth: 64,
+  /** Số element tối đa trong một part XML. */
+  maxXmlNodes: 400000,
+  /** Số thuộc tính tối đa trong một part XML. */
+  maxXmlAttributes: 800000,
+  /** Số đoạn văn/bản ghi tối đa đọc từ một part (ghi chú, comment, cell). */
+  maxXmlBlocks: 20000,
   /** Số trang PDF / slide PPTX / sheet XLSX được đọc. */
   maxPages: 60,
   maxSlides: 60,
@@ -31,6 +37,12 @@ export const PARSER_LIMITS = Object.freeze({
   maxTextChars: 2 * MB,
   /** Thời gian parse tối đa cho một file (ms). */
   maxParsingMs: 8000,
+  /** Số trang PDF tối đa đọc text (thấp hơn maxPages vì tốn CPU hơn). */
+  maxPdfTextPages: 40,
+  /** Số ký tự tối đa của một trang PDF sau khi trích. */
+  maxPageTextChars: 200000,
+  /** Số byte tối đa của một stream PDF sau khi giải nén. */
+  maxPdfStreamBytes: 24 * MB,
 });
 
 /**
@@ -107,6 +119,7 @@ export function assertSafeXml(xml, { name = 'xml', limits = PARSER_LIMITS } = {}
   const fail = (reason, detail) => {
     const error = new Error(`XML không an toàn (${reason}): ${detail || name}`);
     error.code = 'PARSER_ERROR';
+    error.reason = reason;
     return error;
   };
   if (source.length > limits.maxXmlBytes) throw fail('too_large', `${source.length} ký tự`);

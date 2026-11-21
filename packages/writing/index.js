@@ -3,5 +3,8 @@ export {
   MD_KEEP_CLAUSE, MD_PLAIN_CLAUSE, SELF_EDIT, buildPrompt, webPresets,
 } from './prompts.js';
 export { detectLanguage, SUPPORTED_LANGUAGES } from './language.js';
-export { SEVERITY, makeSuggestion, sortSuggestions, suggestionStats } from './suggestions.js';
+export {
+  SEVERITY, CATEGORY, KIND, makeSuggestion, sortSuggestions, suggestionStats,
+} from './suggestions.js';
 export { analyze, applySuggestion, applySuggestions, EN_RULES, VI_RULES, GRAMMAR_SCHEMA_VERSION } from './grammar/index.js';
+export { analyzeConsistency } from './consistency.js';

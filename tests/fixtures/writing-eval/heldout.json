@@ -1,0 +1,78 @@
+{
+  "name": "held-out",
+  "note": "Tập giữ riêng: không dùng để chỉnh luật trong lần phát triển này. Câu tự viết, không chứa dữ liệu người dùng.",
+  "cases": [
+    {
+      "id": "h-vi-typo-boi-vi",
+      "language": "vi",
+      "text": "Bỡi vì trời mưa nên chúng tôi ở nhà.",
+      "expect": [{ "category": "spelling", "original": "Bỡi vì", "replacement": "bởi vì" }]
+    },
+    {
+      "id": "h-vi-style-ngoai-ra",
+      "language": "vi",
+      "text": "Ngoài ra thì bản báo cáo còn thiếu phụ lục.",
+      "expect": [{ "category": "style", "kind": "suggestion", "original": "Ngoài ra thì", "replacement": "ngoài ra" }]
+    },
+    {
+      "id": "h-vi-emphasis-repeat",
+      "language": "vi",
+      "text": "Anh ấy chờ rất rất lâu.",
+      "expect": []
+    },
+    {
+      "id": "h-vi-space-before-comma",
+      "language": "vi",
+      "text": "Anh ấy , vẫn ổn.",
+      "expect": [{ "category": "punctuation", "original": " ,", "replacement": "," }]
+    },
+    {
+      "id": "h-vi-sentence-start",
+      "language": "vi",
+      "text": "hôm nay trời đẹp.",
+      "expect": [{ "category": "capitalization", "original": "h", "replacement": "H" }]
+    },
+    {
+      "id": "h-en-repeated",
+      "language": "en",
+      "text": "The the issue is fixed.",
+      "expect": [{ "category": "grammar", "original": "The the", "replacement": "The" }]
+    },
+    {
+      "id": "h-en-participle",
+      "language": "en",
+      "text": "They have wrote it down.",
+      "expect": [{ "category": "grammar", "original": "have wrote", "replacement": "have written" }]
+    },
+    {
+      "id": "h-en-third-person",
+      "language": "en",
+      "text": "It don't work.",
+      "expect": [{ "category": "grammar", "original": "It don't", "replacement": "It doesn't" }]
+    },
+    {
+      "id": "h-en-article-url",
+      "language": "en",
+      "text": "Open an URL in the browser.",
+      "expect": [{ "category": "grammar", "original": "an", "replacement": "a" }]
+    },
+    {
+      "id": "h-en-would-of",
+      "language": "en",
+      "text": "We could of helped.",
+      "expect": [{ "category": "grammar", "original": "could of", "replacement": "could have" }]
+    },
+    {
+      "id": "h-en-valid-articles",
+      "language": "en",
+      "text": "A user opened an hour-long meeting.",
+      "expect": []
+    },
+    {
+      "id": "h-en-double-space",
+      "language": "en",
+      "text": "Hello  world.",
+      "expect": [{ "category": "punctuation", "original": "  ", "replacement": " " }]
+    }
+  ]
+}

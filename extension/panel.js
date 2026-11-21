@@ -21,19 +21,12 @@
     if (hasStorage) { try { chrome.storage.local.set({ [PROMPT_KEY]: v }); } catch {} }
   };
 
-  const getCfg = () => new Promise(res => {
-    if (!hasStorage) {
-      try { return res(JSON.parse(lsGet("traceCfg", "{}"))); } catch { return res({}); }
-    }
-    try { chrome.storage.local.get("traceCfg", o => res(o.traceCfg || {})); } catch { res({}); }
-  });
-  const saveCfg = cfg => {
-    lsSet("traceCfg", JSON.stringify(cfg));
-    if (!hasStorage) return Promise.resolve(true);
-    return new Promise(res => {
-      try { chrome.storage.local.set({ traceCfg: cfg }, () => res(true)); } catch { res(false); }
-    });
-  };
+  // Key mặc định chỉ ở session; local chỉ khi "Ghi nhớ" — cùng policy với content script.
+  const config = () => (window.TraceConfig || null);
+  const getCfg = async () => (config() ? config().load() : {});
+  const saveCfg = async cfg => (config() ? config().save(cfg) : false);
+  const clearKey = async () => (config() ? config().clearKey() : false);
+  const ensurePermission = async base => (config() ? config().ensurePermission(base) : { ok: false, error: "thiếu config.js" });
 
   async function inPage(fn, args) {
     if (!hasScripting) return null;
@@ -106,6 +99,8 @@
     close: () => { try { window.close(); } catch {} },
     loadCfg: getCfg,
     saveCfg,
+    clearKey,
+    ensurePermission,
     getPrompt,
     setPrompt,
     onPromptChange: cb => {

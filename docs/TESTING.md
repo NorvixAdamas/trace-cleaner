@@ -13,15 +13,34 @@ node tools/bench.js                   # benchmark (không phải test)
 
 Yêu cầu: Node ≥ 20, Python 3.11+ cho parity/build. Test Python tự `skip` nếu không có `python`.
 
-## Kết quả chạy 2026-11-20 (sau 2.2)
+## Kết quả chạy 2026-11-20 (sau 2.3)
 
 | Lệnh | Kết quả |
 |---|---|
-| `npm test` | **193 pass, 0 fail, 0 skip** |
+| `npm test` | **311 pass, 0 fail, 0 skip** |
+| `npx playwright test` | **6 pass, 0 fail** (5 extension + 1 web rewrite) |
 | `node tools/sync_assets.js --check` | `artifact khớp nguồn` |
 | `python tools/sync_core.py --check` | `extension/core khớp packages/core` |
-| `node tools/check_extension.js` | `manifest OK · v2.2.0 · 4 permission` (1 warning) |
-| `node --check` script tách từ `index.html` + 4 file extension | exit 0 |
+| `node tools/check_extension.js` | `manifest OK · v2.3.0 · 4 permission` (1 warning: content script rộng) |
+| `node tools/eval_writing.js --check` | dev 20/20 · held-out 10/10, 0 thừa |
+| `node --check` script tách từ `index.html` + 5 file extension | exit 0 |
+
+### Chrome E2E thật (Playwright 1.65.1 + Chromium 159)
+
+`tests/e2e/extension.spec.js` mở Chromium **headed** với `--load-extension`, dùng service worker,
+content script và storage thật; provider được giả lập bằng `context.route` (không cần API key):
+
+| Test | Nội dung kiểm |
+|---|---|
+| panel render | `panel.html` thật, ping trả `engine 2.3` / `prompt 2.3.0`, manifest 2.3.0 |
+| API key | mặc định không có key trong local, key nằm ở session; tick ghi nhớ → local; reload → nạp lại; Xoá key → sạch cả hai |
+| huỷ request | background abort thật (`requestfailed` = `net::ERR_ABORTED`), UI dừng chờ, kết quả về muộn không ghi đè output |
+| custom host | origin chưa cấp quyền → `CONFIG_ERROR` trước khi gọi mạng |
+| sidebar nổi | `Alt+Shift+S` inject, lấy chữ từ textarea của trang, đóng/mở lại, nút của trang vẫn click được |
+| web rewrite (A9) | hiển thị = proposal = bản Accept; raw của model không lọt vào Review; khôi phục bản gốc đúng |
+
+Không test được bằng Playwright: bong bóng Side Panel do Chrome vẽ (chỉ mở bằng click toolbar);
+phần UI bên trong được test qua chính `panel.html`. CI chạy E2E dưới `xvfb-run`.
 
 ## Test có gì
 
@@ -46,6 +65,13 @@ Yêu cầu: Node ≥ 20, Python 3.11+ cho parity/build. Test Python tự `skip` 
 | `assets-sync.test.js` | drift bundle/prompt/index.html, manifest, marker duy nhất |
 | `writing-prompts.test.js` | 9 chế độ khác nhau, không chỉ dẫn xoá, web khớp registry |
 | `core-sync.test.js` | `extension/core` khớp `packages/core` |
+| `zip.test.js` | streaming budget, 1 byte vượt trần, tổng dung lượng, ratio, metadata sai, archive cụt, entry trùng/traversal/mã hoá, huỷ giữa chừng, CRC32 |
+| `xml.test.js` | well-formed, entity, CDATA, DTD/ENTITY, thuộc tính trùng, độ sâu/node/text, số dòng |
+| `ooxml.test.js` | DOCX ins/del/comment/anchor, PPTX thứ tự slide + notes, XLSX shared/inline/number/bool/error/formula/ngày/hidden, relationship hỏng |
+| `pdf.test.js` | xref table/stream, ObjStm, Flate+predictor, ToUnicode, trang, encrypted, scan, file cụt |
+| `c2pa.test.js` | chữ ký hợp lệ, asset bị sửa, chữ ký sai, manifest hỏng, không có C2PA, trust store |
+| `document-invariants.test.js` | metadata không ghi đè proposal, proposal frozen, acceptEdit, applyLocalEdit (offset cũ bị từ chối), lịch sử |
+| `writing-eval.test.js`, `consistency.test.js` | precision/recall/offset/preservation trên dev + held-out; nhất quán thuật ngữ/ngày/số/đơn vị |
 
 ## Regression bắt buộc
 

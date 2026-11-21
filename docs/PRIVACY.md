@@ -19,17 +19,23 @@ chỉ với loopback (Ollama, LM Studio…).
 
 ## API key
 
-- **Mặc định chỉ trong phiên**: web giữ trong biến của tab (mất khi đóng tab); extension không ghi
-  vào storage trừ khi bạn tick "ghi nhớ".
-- Tick "ghi nhớ" → lưu `localStorage` (web) hoặc `chrome.storage.local` (extension), dạng plaintext.
-  Đây **không phải** mã hoá; bất kỳ tiện ích nào đọc được storage của extension/trang đó đều đọc được.
-- Có nút **Xoá key**. Key không vào log, không vào message lỗi, không vào báo cáo, không vào file
-  trong repo.
+- **Mặc định chỉ trong phiên**: web giữ trong biến của tab (mất khi đóng tab); extension giữ
+  trong `chrome.storage.session` (mất khi đóng trình duyệt, không ghi ra đĩa).
+- Tick **"Ghi nhớ API key trên máy này"** → lưu `localStorage` (web) hoặc `chrome.storage.local`
+  (extension), dạng plaintext. Đây **không phải** mã hoá; bất kỳ tiện ích nào đọc được storage của
+  extension/trang đó đều đọc được.
+- Key cũ do extension ≤2.2 để lại trong `chrome.storage.local` mà không có cờ ghi nhớ sẽ được
+  chuyển sang session và xoá khỏi local ở lần nạp cấu hình kế tiếp.
+- Có nút **Xoá key**, xoá cả bản phiên và bản trên đĩa. Key không vào log, không vào message lỗi,
+  không vào báo cáo, không vào file trong repo.
 
 ## File
 
-File bạn chọn được đọc bằng `FileReader`/`arrayBuffer` trong tab. Không upload. ELA được render
-thành data URL trong bộ nhớ; giữ tối đa 8 kết quả để không phình RAM.
+File bạn chọn được đọc bằng `arrayBuffer` trong tab và parse tại chỗ (`packages/core/zip|xml|ooxml|pdf|c2pa`).
+Không upload. ELA được render thành data URL trong bộ nhớ; giữ tối đa 8 kết quả để không phình RAM.
+
+C2PA được xác minh cục bộ bằng WebCrypto với trust store rỗng mặc định — không có chứng chỉ nào
+được gửi đi để kiểm tra.
 
 ## Lịch sử tài liệu
 

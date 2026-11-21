@@ -11,18 +11,22 @@
 import { segmentText } from '../../core/cleaning.js';
 import { applyEdits } from '../../core/diff.js';
 import { detectLanguage, SUPPORTED_LANGUAGES } from '../language.js';
-import { makeSuggestion, sortSuggestions, suggestionStats, SEVERITY } from '../suggestions.js';
+import {
+  makeSuggestion, sortSuggestions, suggestionStats, SEVERITY, CATEGORY, KIND,
+} from '../suggestions.js';
 import { EN_RULES } from './en.js';
 import { VI_RULES } from './vi.js';
 
-export const GRAMMAR_SCHEMA_VERSION = '1.0';
+export const GRAMMAR_SCHEMA_VERSION = '2.0';
 
 /** Luật an toàn cho mọi ngôn ngữ (không phụ thuộc ngữ pháp). */
 const NEUTRAL_RULES = [
   {
     id: 'neutral.double-space',
-    type: 'punctuation',
-    severity: 'info',
+    type: CATEGORY.PUNCTUATION,
+    severity: SEVERITY.INFO,
+    kind: KIND.CORRECTION,
+    confidence: 0.9,
     run(text) {
       const out = [];
       const re = /[ \t]{2,}/g;
@@ -35,9 +39,16 @@ const NEUTRAL_RULES = [
   },
 ];
 
+function paragraphAt(source, index) {
+  let paragraph = 0;
+  for (let i = 0; i < index && i < source.length; i++) if (source.charCodeAt(i) === 10) paragraph++;
+  return paragraph;
+}
+
 /**
  * @param {string} text
- * @param {{language?:'en'|'vi'|'unknown', maxSuggestions?:number, types?:string[]}} [options]
+ * @param {{language?:'en'|'vi'|'unknown', maxSuggestions?:number, types?:string[],
+ *   minConfidence?:number}} [options]
  * @returns {{language:string, supported:boolean, suggestions:Array<object>, stats:object,
  *   schemaVersion:string, offsetSystem:string}}
  */
@@ -48,10 +59,12 @@ export function analyze(text, options = {}) {
     : detectLanguage(source);
   const rules = language === 'vi' ? VI_RULES : language === 'en' ? EN_RULES : NEUTRAL_RULES;
   const filter = Array.isArray(options.types) && options.types.length ? new Set(options.types) : null;
+  const minConfidence = Number.isFinite(options.minConfidence) ? Number(options.minConfidence) : 0;
   const collected = [];
 
   for (const seg of segmentText(source)) {
     if (seg.type !== 'text' || !seg.value) continue;
+    const paragraph = paragraphAt(source, seg.start);
     for (const rule of rules) {
       if (filter && !filter.has(rule.type)) continue;
       let hits = [];
@@ -63,16 +76,24 @@ export function analyze(text, options = {}) {
       for (const hit of hits) {
         if (!Number.isInteger(hit.start) || !Number.isInteger(hit.end) || hit.end <= hit.start) continue;
         const suggestion = makeSuggestion(source, {
-          type: rule.type,
+          type: hit.category || rule.type,
+          category: hit.category || rule.type,
+          kind: hit.kind || rule.kind,
+          confidence: Number.isFinite(hit.confidence) ? hit.confidence : rule.confidence,
           severity: hit.severity || rule.severity || SEVERITY.WARNING,
           language,
           start: seg.start + hit.start,
           end: seg.start + hit.end,
           replacement: hit.replacement,
           reason: hit.reason,
+          explanation: hit.explanation,
           ruleId: rule.id,
+          paragraph,
         });
-        if (suggestion.original && suggestion.original !== suggestion.replacement) collected.push(suggestion);
+        if (suggestion.original && suggestion.original !== suggestion.replacement
+          && (suggestion.confidence || 0) >= minConfidence) {
+          collected.push(suggestion);
+        }
       }
     }
   }
@@ -123,4 +144,3 @@ export function applySuggestions(text, suggestions, options = {}) {
   }));
   return applyEdits(text, edits, { sourceRevision: options.sourceRevision });
 }
-

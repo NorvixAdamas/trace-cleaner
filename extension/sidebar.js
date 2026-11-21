@@ -132,8 +132,10 @@ window.TraceSidebar = (() => {
         <select id="cProvider"><option value="google">Google Gemini</option><option value="openai">OpenAI-compatible</option></select>
         <input id="cBase" placeholder="base url">
         <input id="cModel" placeholder="gemini-3.8-flash">
-        <input id="cKey" type="password" autocomplete="off" spellcheck="false" placeholder="API key (lưu trong chrome.storage.local)">
-        <button id="btnSaveCfg" style="margin-top:6px">Lưu cấu hình</button>
+        <input id="cKey" type="password" autocomplete="off" spellcheck="false" placeholder="API key (chỉ lưu trong phiên)">
+        <label class="chk" style="margin-top:6px"><input type="checkbox" id="cRemember"> Ghi nhớ API key trên máy này</label>
+        <div class="row" style="margin-top:6px"><button id="btnSaveCfg">Lưu cấu hình</button><button id="btnForgetKey" class="ghost">Xoá key</button></div>
+        <div class="status" id="cfgMsg" style="font-size:10.5px"></div>
       </details>
       <div class="foot">Làm sạch chạy 100% tại máy. Humanize gửi văn bản lên Google/OpenAI qua background — chỗ này rời máy.
       Điểm số không phải "đã xoá dấu vết AI": detector thương mại vẫn bắt được phần lớn văn bản đã viết lại.</div>
@@ -446,21 +448,47 @@ window.TraceSidebar = (() => {
     });
     $("btnClose").addEventListener("click", () => { closeZoom(); if (hooks.close) hooks.close(); });
 
-    // API config
-    const cfgFields = ["cProvider", "cBase", "cModel", "cKey"];
-    const readCfg = () => ({ provider: $("cProvider").value, base: $("cBase").value.trim(), model: $("cModel").value.trim(), key: $("cKey").value });
+    // API config — key mặc định chỉ ở session; local chỉ khi tick "Ghi nhớ".
+    const cfgMsg = $("cfgMsg");
+    const readCfg = () => ({
+      provider: $("cProvider").value,
+      base: $("cBase").value.trim(),
+      model: $("cModel").value.trim(),
+      key: $("cKey").value,
+      remember: $("cRemember").checked,
+    });
     (async () => {
       const cfg = (hooks.loadCfg && await hooks.loadCfg()) || {};
       if (cfg.provider) $("cProvider").value = cfg.provider;
       if (cfg.base) $("cBase").value = cfg.base;
       if (cfg.model) $("cModel").value = cfg.model;
       if (cfg.key) $("cKey").value = cfg.key;
+      $("cRemember").checked = cfg.remember === true;
       if (!cfg.base) $("cBase").value = "https://generativelanguage.googleapis.com/v1beta";
       if (!cfg.model) $("cModel").value = "gemini-3.8-flash";
     })();
     $("btnSaveCfg").addEventListener("click", async () => {
-      if (hooks.saveCfg) await hooks.saveCfg(readCfg());
+      const cfg = readCfg();
+      if (hooks.saveCfg) await hooks.saveCfg(cfg);
+      cfgMsg.textContent = cfg.remember
+        ? "Đã lưu · key được ghi trên máy này vì bạn đã tick ghi nhớ."
+        : "Đã lưu · key chỉ sống trong phiên trình duyệt.";
+      // Provider tuỳ biến: xin quyền đúng origin, ngay trong user gesture này.
+      if (cfg.provider === "openai" && typeof hooks.ensurePermission === "function") {
+        const result = await hooks.ensurePermission(cfg.base);
+        if (result && result.ok) {
+          cfgMsg.textContent += result.already ? " Quyền host đã có." : " Đã cấp quyền cho " + result.pattern + ".";
+        } else if (result && result.error) {
+          cfgMsg.textContent += " " + result.error;
+        }
+      }
       say("Đã lưu cấu hình.", "ok");
+    });
+    $("btnForgetKey").addEventListener("click", async () => {
+      $("cKey").value = "";
+      $("cRemember").checked = false;
+      if (hooks.clearKey) await hooks.clearKey();
+      cfgMsg.textContent = "Đã xoá key khỏi phiên và khỏi máy.";
     });
 
     paintOrder();

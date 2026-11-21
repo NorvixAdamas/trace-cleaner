@@ -1,0 +1,6 @@
+{
+  "fingerprintSha256": "0e59dde5f05ef1a49733bb0dec268492ed2f1ab1a98b8028025b6f2b15a391dd",
+  "certPem": "-----BEGIN CERTIFICATE-----\r\nMIIBwDCCAWWgAwIBAgIUcPmp575pbZV9YQEehc29LqPcSU8wCgYIKoZIzj0EAwIw\r\nNTEbMBkGA1UEAwwSVHJhY2UgQ2xlYW5lciBUZXN0MRYwFAYDVQQKDA1UcmFjZSBD\r\nbGVhbmVyMB4XDTI2MTEyMDIzNDQ1OFoXDTM2MTExNzIzNDQ1OFowNTEbMBkGA1UE\r\nAwwSVHJhY2UgQ2xlYW5lciBUZXN0MRYwFAYDVQQKDA1UcmFjZSBDbGVhbmVyMFkw\r\nEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEn+d2rtGJL9hcdsI4o7gDGXhSpCVC4elu\r\nyi2rtMAI+Q+f+MH3Dru65fdRCzd/GKIHysb2XJjHlVfItmkDd5YXwaNTMFEwHQYD\r\nVR0OBBYEFCCNcec9wIDTi9AQoDct7LuR4uTpMB8GA1UdIwQYMBaAFCCNcec9wIDT\r\ni9AQoDct7LuR4uTpMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIh\r\nAKkyNC8obzHOKVVNC72kjS7fax8ho6Oc3wmhf5h3ksNIAiEApeAUP5psdw22mtNN\r\nbjG5vFyWM+csqEFq3TLA5OH3fxU=\r\n-----END CERTIFICATE-----\r\n",
+  "generatedBy": "tools/make_c2pa_fixture.mjs",
+  "note": "Private key chỉ tồn tại trong thư mục tạm và đã bị xoá; fixture chỉ dùng để test xác minh chữ ký."
+}
